@@ -142,23 +142,20 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
                 fread(&root, sizeof(cs1550_root_directory), 1, disk);       // put first 512bytes into root struct
 
                 // search for the directory from list of valid directories 
-                int found=0, location=0;
+                int dir_found=0, location=0;
                 for (location=0; i < root.nDirectories; location++) {
-                    if (strcmp(root.files[location], dir) == 0) {
-                        found = 1;                          // input dir was found
+                    if (strcmp(root.directories[location], dir) == 0) {
+                        dir_found = 1;                          // input dir was found
                         break;
                     }
                 }
 
                 // make sure the path given was valid
-                if (found == 0) { 
+                if (dir_found == 0) { 
                     return -ENOENT;                         // dir given was not valid
 
                 } else {
                     if (scan_result == 1) {                 // only given directory
-                        // get directory attributes
-                        
-
                         // fill stbuf struct
                         stbuf->st_mode = S_IFDIR | 0755;    // 
                         stbuf->st_nlink = 2;                // 
@@ -173,7 +170,24 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
                             cs1550_directory_entry working_dir;
                             fread(&working_dir, sizeof(cs1550_directory_entry), 1, disk);       // put first 512bytes into root struct
 
-                            // loop over files to see if it exists
+                            // make extension NULL if blank
+                            if (scan_result == 2) { ext = '\0';}
+
+                            // loop over files to see if it exists (fname fext)
+                            int file_found=0, file_location=0;
+                            for (file_location=0; i < working_dir.nFiles; file_location++) {
+                                if ((strcmp(working_dir.files[file_location].fname, filename) == 0) 
+                                    && (strcmp(working_dir.files[file_location].fext, ext) == 0)) {
+                                    file_found = 1;                          // input dir was found
+                                    break;
+                                }
+                            }
+
+                            if (file_found == 0) {
+                                return -ENOENT;
+                            } else {
+                                // found the file.
+                            }
 
                             stbuf->st_mode = S_IFREG | 0666; 
                             stbuf->st_nlink = 1;                // file links
