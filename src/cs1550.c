@@ -117,22 +117,73 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
         // OTHER CHECKS FOR BAD PATH HERE
 
         } else {
-            // get the directory and file information
-            sscanf(path, "/%[^/]/%[^.].%s", dir, filename, ext);
+            /*
+                Get the directory and file information
 
+                On success, the function returns the number of variables filled. 
+                In the case of an input failure before any data could be successfully read, EOF is returned.
+            */
+            int scan_result = sscanf(path, "/%[^/]/%[^.].%s", dir, filename, ext);
+
+            if (scan_result == 0) { return -ENOENT; }                       // nothing was filled (no dir, no filesname, no ext)
             if (strlen(dir) > MAX_FILENAME + 1) { return -ENOENT; }         // make sure directory within max length
             if (strlen(filename) > MAX_FILENAME + 1) { return -ENOENT; }    // make sure filename within max length
             if (strlen(ext) > MAX_EXTENSION + 1) { return -ENOENT; }        // make sure extension within max length
 
             // open the disk file
-            FILE *disk = fopen(DISK, "rb");     // open with respect to binary mode
+            FILE *disk = fopen(DISK, "rb");                                 // open with respect to binary mode
 
             // make sure could open the disk file
             if (disk == NULL) {
                 return -ENOENT;
 
             } else {
-                cs1550_root_directory root = fread(0, BLOCK_SIZE, disk);
+                cs1550_root_directory root;                                 // pointer to root of disk file
+                fread(&root, sizeof(cs1550_root_directory), 1, disk);       // put first 512bytes into root struct
+
+                // search for the directory from list of valid directories 
+                int found=0, location=0;
+                for (location=0; i < root.nDirectories; location++) {
+                    if (strcmp(root.files[location], dir) == 0) {
+                        found = 1;                          // input dir was found
+                        break;
+                    }
+                }
+
+                // make sure the path given was valid
+                if (found == 0) { 
+                    return -ENOENT;                         // dir given was not valid
+
+                } else {
+                    if (scan_result == 1) {                 // only given directory
+                        // get directory attributes
+                        
+
+                        // fill stbuf struct
+                        stbuf->st_mode = S_IFDIR | 0755;    // 
+                        stbuf->st_nlink = 2;                // 
+                        
+                        return 0;                           // SUCCESS 
+                        
+                    } else {
+                        // check if file exists by getting directory and looking through it
+                        int fseekret = fseek(disk, SEEK_SET, root.directories[location].nStartBlock * BLOCK_SIZE);
+
+                        if (fseekret == 0) {
+                            cs1550_directory_entry working_dir;
+                            fread(&working_dir, sizeof(cs1550_directory_entry), 1, disk);       // put first 512bytes into root struct
+
+                            // loop over files to see if it exists
+
+                            stbuf->st_mode = S_IFREG | 0666; 
+                            stbuf->st_nlink = 1;                // file links
+                            stbuf->st_size = 0;                 // file size - make sure you replace with real size!
+                            return 0;                           // SUCCESS
+                        } else {
+                            return -ENOENT;
+                        }
+                    }
+                }
             }
 
             // Check if name is subdirectory
@@ -156,6 +207,8 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
             res = -ENOENT;
         }
     }
+
+    // MAKE SURE TO CLOSE THE DISK BEFORE RETURNING
     return res;
 }
 
