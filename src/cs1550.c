@@ -15,20 +15,18 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
+#include "bitmap.c"
 
-// size of a disk block
-#define    BLOCK_SIZE 512
-
-// we'll use 8.3 filenames
-#define    MAX_FILENAME 8
-#define    MAX_EXTENSION 3
-#define    MAX_LENGTH MAX_FILENAME * 2 + MAX_EXTENSION + 1  // length of dir + filename + extension + NULL
-
-// keep reference to our .disk file
-#define    DISK ".disk"
+#define     BLOCK_SIZE      512     // disk's block size
+#define     MAX_FILENAME    8       // 8.3 filenames
+#define     MAX_EXTENSION   3
+#define     MAX_LENGTH      MAX_FILENAME * 2 + MAX_EXTENSION + 1  // length of dir + filename + extension + NULL
+#define     DISK            ".disk"    // keep reference to our .disk file
 
 // How many files can there be in one directory?
-#define MAX_FILES_IN_DIR (BLOCK_SIZE - sizeof(int)) / ((MAX_FILENAME + 1) + (MAX_EXTENSION + 1) + sizeof(size_t) + sizeof(long))
+#define     MAX_FILES_IN_DIR (BLOCK_SIZE - sizeof(int)) / ((MAX_FILENAME + 1) + (MAX_EXTENSION + 1) + sizeof(size_t) + sizeof(long))
+
+bitmap map[MAX_BITS];
 
 // The attribute packed means to not align these things
 struct cs1550_directory_entry
@@ -64,7 +62,7 @@ struct cs1550_root_directory
     } __attribute__((packed)) directories[MAX_DIRS_IN_ROOT];    // There is an array of these
 
     // This is some space to get this to be exactly the size of the disk block.
-    // Don't use it for anything.  
+    // Don't use it for anything.
     char padding[BLOCK_SIZE - MAX_DIRS_IN_ROOT * sizeof(struct cs1550_directory) - sizeof(int)];
 };
 
@@ -134,7 +132,7 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
             } else {
 
                 // open the disk file
-                FILE *disk = fopen(DISK, "rb");             // open with respect to binary mode
+                FILE *disk = fopen(DISK, "rb");         // open with respect to binary mode
 
                 // make sure could open the disk file
                 if (disk == NULL) {
@@ -189,7 +187,6 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
                                     }
                                 }
                             }
-
                             break;
                         }
                     }
@@ -236,15 +233,57 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 }
 
 /* 
- * Creates a directory. We can ignore mode since we're not dealing with
- * permissions, as long as getattr returns appropriate ones for us.
+    Creates a directory. We can ignore mode since we're not dealing with
+    permissions, as long as getattr returns appropriate ones for us.
  */
 static int cs1550_mkdir(const char *path, mode_t mode)
 {
-    (void) path;
     (void) mode;
 
-    return 0;
+    int status = 0, free_block;
+    char dir_name[MAX_LENGTH];
+    char file[MAX_LENGTH];
+
+    // if the path contains a slash within the string then
+    //      it's not within the root directory
+    int scan_result = sscanf(path, "/%[^/]/%[^.]", dir_name, file);
+
+    if (scan_result != 1) {
+        status = -EPERM;                // ERROR: can ONLY create dir within '/' root
+
+    } else if (strlen(dir) > MAX_FILENAME) {
+        status = -ENAMETOOLONG;         // ERROR: directory name too long
+
+    } else if (cs1550_getattr(path) == 0) {
+        status = -EEXIST;               // ERROR: directory already exists
+
+    } else if ((free_block = find_free_block(map)) == -1) {
+        status = -ENOSPC;               // ERROR: no space left on disk
+
+    } else {
+        /* TRY TO CREATE THE DIRECTORY */
+
+        // open the disk file
+        disk = fopen(DISK, "r+b");      // open for reading + writing (binary)
+
+        // get the root within the disk file
+        cs1550_root_directory root;                             // pointer to root of disk file
+        fread(&root, sizeof(cs1550_root_directory), 1, disk);   // root in disk exists within first 512bytes
+
+        // make sure the root can hold another directory listing
+        if (root.nDirectories >= MAX_DIRS_IN_ROOT) {
+            status = -ENOMEM;                                   // ERROR: not enough space
+
+        } else {
+            // create root dir struct
+            struct cs1550_directory new_dir;            // create a new directory stub
+            new_dir.dname = dir_name;                   // name of the actual directory
+            new_dir.nStartBlock = free_block;           // make the start block the beginning of the free block found
+            root.directories[nDirectories] = new_dir;   // add directory to list of valid directories
+        }
+    }
+    
+    return status;
 }
 
 /* 
