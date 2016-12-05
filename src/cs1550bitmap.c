@@ -179,25 +179,19 @@ void write_bitmap() {
 
     if (disk == NULL) {
         //return -ENOENT;                       // ERROR: file not opened successfully
-        printf("write_bitmap DISK IS NULL\n");
+        
     } else {
         // write the bitmap to the disk file
         int res;
         res = fseek(disk, -(3*BLOCK_SIZE), SEEK_END); // bitmap held in last three blocks of file
-        if (res < 0) {
-            printf("write_bitmap ERROR WITH fseek\n");
-        }
+        if (res < 0) { printf("write_bitmap ERROR WITH fseek\n"); }
 
         res = fwrite(map, MAP_SIZE, 1, disk);         // write bitmap to disk
-        if (res < 0) {
-            printf("write_bitmap ERROR WITH fwrite\n");
-        }
+        if (res < 0) { printf("write_bitmap ERROR WITH fwrite\n"); }
 
         printf("write_bitmap CLOSING DISK FILE\n");
         res = fclose(disk);                           // close the file
-        if (res < 0) {
-            printf("write_bitmap ERROR WITH CLOSING DISK\n");
-        }
+        if (res < 0) { printf("write_bitmap ERROR WITH CLOSING DISK\n"); }
     }
 
     printf("              -----------------------------------------------END write_bitmap\n");
