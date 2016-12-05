@@ -21,13 +21,13 @@ static bitmap *map = NULL;       // 10240 / sizeof(char) = 1280
 #define GET_BM_INDEX(i) ((i) / CHAR_BITS)   /* get the correct index into the array */
 #define GET_BIT_OFFSET(i) ((i) % CHAR_BITS) /* get the correct bit in the index */
 
-// void init_bitmap();
-// void clear_bit(int index);
-// int get_bit(int index);
-// void set_bit(int index);
-// int find_free_block();
-// void write_bitmap();
-// const char *byte_to_binary(int x);
+void init_bitmap();
+void clear_bit(int index);
+int get_bit(int index);
+void set_bit(int index);
+int find_free_block();
+void write_bitmap();
+const char *byte_to_binary(int x);
 
 /*
     Initializes the bitmap by associating it with the
