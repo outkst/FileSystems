@@ -7,6 +7,8 @@
 
     If a block is not completely full, then pad it with ZERO
 */
+#include "cs1550bitmap.c"
+//#include "cs1550.h"
 
 #define    FUSE_USE_VERSION 26
 
@@ -15,18 +17,18 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
-#include "bitmap.c"
 
 #define     BLOCK_SIZE      512     // disk's block size
+#define     DISK            ".disk"    // keep reference to our .disk file
 #define     MAX_FILENAME    8       // 8.3 filenames
 #define     MAX_EXTENSION   3
 #define     MAX_LENGTH      MAX_FILENAME * 2 + MAX_EXTENSION + 1  // length of dir + filename + extension + NULL
-#define     DISK            ".disk"    // keep reference to our .disk file
+
 
 // How many files can there be in one directory?
 #define     MAX_FILES_IN_DIR (BLOCK_SIZE - sizeof(int)) / ((MAX_FILENAME + 1) + (MAX_EXTENSION + 1) + sizeof(size_t) + sizeof(long))
 
-bitmap map[MAX_BITS];
+static bitmap *map = NULL;       // 10240 / sizeof(char) = 1280
 
 // The attribute packed means to not align these things
 struct cs1550_directory_entry
@@ -66,7 +68,6 @@ struct cs1550_root_directory
     char padding[BLOCK_SIZE - MAX_DIRS_IN_ROOT * sizeof(struct cs1550_directory) - sizeof(int)];
 };
 
-
 typedef struct cs1550_directory_entry cs1550_directory_entry;
 
 // How much data can one block hold?
@@ -93,6 +94,7 @@ typedef struct cs1550_disk_block cs1550_disk_block;
  */
 static int cs1550_getattr(const char *path, struct stat *stbuf)
 {
+    printf("cs1550_getattr STARTING...\n");
     int status = -ENOENT;                   // default is error
 
     // hold the directory, filename, and extension (if any)
@@ -101,7 +103,7 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
     char ext[MAX_LENGTH];
 
     memset(stbuf, 0, sizeof(struct stat));
-
+    
     // is path the root dir?
     if (strcmp(path, "/") == 0) {           // path is the root dir
         stbuf->st_mode = S_IFDIR | 0755;
@@ -143,7 +145,7 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
                     fread(&root, sizeof(cs1550_root_directory), 1, disk);           // put first 512bytes into root struct
 
                     // search for the directory from list of valid directories 
-                    int dir_found=0, location=0;
+                    int location;
                     for (location=0; location < root.nDirectories; location++) {    // loop through valid directories
                         if (strcmp(root.directories[location].dname, dir) == 0) {
 
@@ -190,9 +192,7 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
                             break;
                         }
                     }
-
-                    // close the disk
-                    fclose(disk);
+                    fclose(disk);   // close the disk
                 }
             }
         }
@@ -221,8 +221,8 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
     // the filler function allows us to add entries to the listing
     // read the fuse.h file for a description (in the ../include dir)
-   filler(buf, ".", NULL, 0);
-   filler(buf, "..", NULL, 0);
+    filler(buf, ".", NULL, 0);
+    filler(buf, "..", NULL, 0);
 
     /*
     // add the user stuff (subdirs or files)
@@ -243,46 +243,90 @@ static int cs1550_mkdir(const char *path, mode_t mode)
     int status = 0, free_block;
     char dir_name[MAX_LENGTH];
     char file[MAX_LENGTH];
+    FILE *disk;
 
     // if the path contains a slash within the string then
     //      it's not within the root directory
     int scan_result = sscanf(path, "/%[^/]/%[^.]", dir_name, file);
 
+    printf("cs1550_mkdir scan_result = %d\n", scan_result);
+
     if (scan_result != 1) {
         status = -EPERM;                // ERROR: can ONLY create dir within '/' root
+        printf("!! ERROR !! CAN ONLY CREATE DIR WITHIN '/' ROOT\n");
 
-    } else if (strlen(dir) > MAX_FILENAME) {
+    } else if (strlen(dir_name) > MAX_FILENAME) {
         status = -ENAMETOOLONG;         // ERROR: directory name too long
-
-    } else if (cs1550_getattr(path) == 0) {
-        status = -EEXIST;               // ERROR: directory already exists
+        printf("!! ERROR !! DIRECTORY NAME TOO LONG\n");
 
     } else if ((free_block = find_free_block(map)) == -1) {
         status = -ENOSPC;               // ERROR: no space left on disk
+        printf("!! ERROR !! NO SPACE LEFT ON DISK\n");
 
     } else {
         /* TRY TO CREATE THE DIRECTORY */
 
         // open the disk file
         disk = fopen(DISK, "r+b");      // open for reading + writing (binary)
+        printf("cs1550_mkdir OPENING DISK FOR READ+WRITE BINARY\n");
 
-        // get the root within the disk file
-        cs1550_root_directory root;                             // pointer to root of disk file
-        fread(&root, sizeof(cs1550_root_directory), 1, disk);   // root in disk exists within first 512bytes
-
-        // make sure the root can hold another directory listing
-        if (root.nDirectories >= MAX_DIRS_IN_ROOT) {
-            status = -ENOMEM;                                   // ERROR: not enough space
+        if (disk == NULL) {
+            status = -ENOENT;           // ERROR: file not opened successfully
+            printf("cs1550_mkdir DISK COULD NOT BE OPENED\n");
 
         } else {
-            // create root dir struct
-            struct cs1550_directory new_dir;            // create a new directory stub
-            new_dir.dname = dir_name;                   // name of the actual directory
-            new_dir.nStartBlock = free_block;           // make the start block the beginning of the free block found
-            root.directories[nDirectories] = new_dir;   // add directory to list of valid directories
+            // get the root within the disk file
+            cs1550_root_directory root;                             // pointer to root of disk file
+            fread(&root, sizeof(cs1550_root_directory), 1, disk);   // root in disk exists within first 512bytes
+            printf("cs1550_mkdir READ IN cs1550_root_directory ROOT FROM DISK\n");
+
+            // make sure the root can hold another directory listing
+            if (root.nDirectories >= MAX_DIRS_IN_ROOT) {
+                status = -ENOMEM;                                   // ERROR: not enough space
+                printf("!! ERROR !! NOT ENOUGH SPACE\n");
+
+            } else {
+                // create directory inside the free block
+                cs1550_directory_entry *new_dir;                    // create a new directory struct to put in free block
+                new_dir = (struct cs1550_directory_entry*)calloc(1, sizeof(struct cs1550_directory_entry));
+                new_dir->nFiles = 0;                                // no files exist at first
+                printf("cs1550_mkdir CREATED cs1550_directory_entry structure\n");
+
+                fseek(disk, free_block * BLOCK_SIZE, SEEK_SET);     // goto free block
+                fwrite(new_dir, sizeof(cs1550_directory_entry), 1, disk);   // write bitmap to disk
+                printf("cs1550_mkdir SEEKED TO FREE BLOCK %d and wrote dir_entry struct\n", free_block);
+
+                // create root dir struct
+                struct cs1550_directory *new_dir_entry;            // create a new directory stub
+                new_dir_entry = (struct cs1550_directory*)calloc(1, sizeof(struct cs1550_directory));
+                printf("cs1550_mkdir CREATED cs1550_directory structure\n");
+
+                strcpy(new_dir_entry->dname, dir_name);            // name of the actual directory
+                printf("cs1550_mkdir COPIED dir_name '%s' to cs1550_directory struct dname '%s'\n", dir_name, new_dir_entry->dname);
+
+                new_dir_entry->nStartBlock = free_block;           // make the start block the beginning of the free block found
+                printf("cs1550_mkdir COPIED free_block '%d' to new_dir_entry.nStartBlock '%lu'\n", free_block, new_dir_entry->nStartBlock);
+
+                printf("cs1550_mkdir UPDATING root nDirectories by adding new_dir_entry\n");
+                root.directories[root.nDirectories] = *new_dir_entry;   // add directory to list of valid directories
+                root.nDirectories++;
+
+                printf("cs1550_mkdir OUTPUTTING new_dir_entry from within root: dname='%s' nstartblock='%lu'\n", root.directories[root.nDirectories-1].dname, root.directories[root.nDirectories-1].nStartBlock);
+            }
         }
     }
     
+    printf("cs1550_mkdir status=%d\n", status);
+    if (status == 0) {
+        fclose(disk);           // close the disk
+        printf("cs1550_mkdir CLOSED DISK\n");
+
+        //printf("[%d][%d][%d]\n", map[0], map[1], map[2]);
+        //printf("[%s]\n", byte_to_binary(map[1]);
+        write_bitmap(map);      // update the bitmap on disk
+        printf("cs1550_mkdir UPDATED BITMAP\n");
+    }
+
     return status;
 }
 
