@@ -4,8 +4,7 @@
     http://stackoverflow.com/a/1226129
     www.mathcs.emory.edu/~cheung/Courses/255/Syllabus/1-C-intro/bit-array.html
 */
-//#include "cs1550.c"                         /* cs1550_root_directory */
-//#include "cs1550.h"
+
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
@@ -22,26 +21,25 @@ static bitmap *map = NULL;       // 10240 / sizeof(char) = 1280
 #define GET_BM_INDEX(i) ((i) / CHAR_BITS)   /* get the correct index into the array */
 #define GET_BIT_OFFSET(i) ((i) % CHAR_BITS) /* get the correct bit in the index */
 
-void init_bitmap();
-void clear_bit(int index);
-int get_bit(int index);
-void set_bit(int index);
-int find_free_block();
-void write_bitmap();
-const char *byte_to_binary(int x);
-//void rebuild_bitmap(bitmap *map, FILE *disk);
+// void init_bitmap();
+// void clear_bit(int index);
+// int get_bit(int index);
+// void set_bit(int index);
+// int find_free_block();
+// void write_bitmap();
+// const char *byte_to_binary(int x);
 
 /*
     Initializes the bitmap by associating it with the
     given disk file.
 */
 void init_bitmap() {
-    printf("init_bitmap INITIALIZING BITMAP...\n");
-    FILE *disk = fopen(DISK, "rb");                     // open file with respect to binary mode
-    //fclose(disk);
-    //printf("init_bitmap CLOSED DISK\n");
+    printf("[START init_bitmap]-------------------------------------------------------------\n");
+
+    FILE *disk = fopen(DISK, "rb");                 // open file with respect to binary mode
+
     if (disk == NULL) {
-        //return -ENOENT;                                 // ERROR: file not opened successfully
+        //return -ENOENT;                           // ERROR: file not opened successfully
         printf("init_bitmap DISK IS NULL\n");
     } else {
         // allocate the needed space for map
@@ -50,31 +48,17 @@ void init_bitmap() {
         printf("init_bitmap map[0]=%s\n", byte_to_binary(map[0]));
 
         // get the bitmap from the disk file
-        fseek(disk, -(3*BLOCK_SIZE), SEEK_END);         // bitmap held in last three blocks of file
-        fread(map, MAP_SIZE, 1, disk);                // pull this block as a directory entry
+        fseek(disk, -(3*BLOCK_SIZE), SEEK_END);     // bitmap held in last three blocks of file
+        fread(map, MAP_SIZE, 1, disk);              // pull this block as a directory entry
         printf("init_bitmap GRABBED BITMAP FROM LAST 3 BLOCKS ON DISK\n");
 
         // set certain regions of the bitmap to USED
-        set_bit(0);                                // root
-        printf("init_bitmap SET map AT BIT %d TO 1\n", 0);
-        printf("init_bitmap map[0]=%s\n", byte_to_binary(map[0]));
+        set_bit(0);                 // root
+        set_bit(MAX_BITS-3);        // bitmap start
+        set_bit(MAX_BITS-2);        // bitmap mid
+        set_bit(MAX_BITS-1);        // bitmap end
 
-        printf("init_bitmap map[%d]=%s\n", 1279, byte_to_binary(map[1279]));
-        set_bit(MAX_BITS-3);                       // bitmap start
-        set_bit(MAX_BITS-2);                       // bitmap mid
-        set_bit(MAX_BITS-1);                       // bitmap end
-        printf("init_bitmap map[%d]=%s\n", 1279, byte_to_binary(map[1279]));
-
-        printf("init_bitmap DISK IS %p\n", disk);
-        printf("init_bitmap INIT_BITMAP CLOSING DISK...\n");
-        printf("init_bitmap map[0]=%s\n", byte_to_binary(map[0]));
-        
-        printf("set_bit BEFORE fclose() MAP AS POINTER= %p\n", map);
-        fclose(disk);
-        printf("set_bit AFTER fclose() MAP AS POINTER= %p\n", map);
-
-        printf("init_bitmap CLOSED DISK\n");                                  // close the file
-        //printf("init_bitmap map[0]=%d\n", map[0]);
+        fclose(disk);               // close the file
     }
 
     printf("              -----------------------------------------------END init_bitmap\n");
@@ -85,11 +69,13 @@ void init_bitmap() {
 */
 void set_bit(int index) {
     printf("START set_bit-------------------------------------------------------------\n");
+
     if (map == NULL) { init_bitmap(map); }  // make sure bitmap is initialized
     printf("set_bit MAP AS POINTER= %p\n", map);
     printf("set_bit GET_BM_INDEX(%d)=%d, GET_BIT_OFFSET(%d)=%d\n", index, GET_BM_INDEX(index), index, GET_BIT_OFFSET(index));
     printf("set_bit (1 << GET_BIT_OFFSET(%d) = %s\n", index, byte_to_binary(1 << GET_BIT_OFFSET(index)));
     map[GET_BM_INDEX(index)] |= (1 << GET_BIT_OFFSET(index));
+
     printf("              -----------------------------------------------END set_bit\n");
 }
 
@@ -98,9 +84,11 @@ void set_bit(int index) {
 */
 void clear_bit(int index) {
     printf("START clear_bit-------------------------------------------------------------\n");
+
     if (map == NULL) { init_bitmap(map); }  // make sure bitmap is initialized
 
     map[GET_BM_INDEX(index)] &= ~(1 << GET_BIT_OFFSET(index));
+
     printf("              -----------------------------------------------END clear_bit\n");
 }
 
@@ -109,24 +97,10 @@ void clear_bit(int index) {
 */
 int get_bit(int index) {
     printf("START get_bit-------------------------------------------------------------\n");
-    printf("get_bit MAP AS POINTER= %p\n", map);
-    printf("(1) GET_BIT map's POINTER VALUE: %p\n", map);
+
     if (map == NULL) { init_bitmap(map); }  // make sure bitmap is initialized
-    printf("(2) GET_BIT map's POINTER VALUE: %p\n", map);
 
-    printf("get_bit GETTING BIT FOR DISK INDEX %d, AKA MAP INDEX %d\n", index, GET_BM_INDEX(index));
-
-    //printf("get_bit map's pointer: %p", map);
-    //printf("get_bit map[0]=%d\n", map[0]);
-
-    printf("get_bit GET_BM_INDEX(%d)=%d\n", index, GET_BM_INDEX(index));
-    printf("get_bit GET_BIT_OFFSET(%d)=%d\n", index, GET_BIT_OFFSET(index));
-    printf("get_bit map[GET_BM_INDEX(%d)]=%d\n", index, map[GET_BM_INDEX(index)]);
-    printf("(1 << GET_BIT_OFFSET(%d)) = %d\n", index, (1 << GET_BIT_OFFSET(index)));
     bitmap bit = map[GET_BM_INDEX(index)] & (1 << GET_BIT_OFFSET(index));
-
-    printf("get_bit bit=%d\n", bit);
-    printf("get_bit bit=%s\n", byte_to_binary(bit));
 
     printf("              -----------------------------------------------END get_bit\n");
 
@@ -179,7 +153,7 @@ void write_bitmap() {
 
     if (disk == NULL) {
         //return -ENOENT;                       // ERROR: file not opened successfully
-        
+        printf("write_bitmap DISK IS NULL\n");
     } else {
         // write the bitmap to the disk file
         int res;
