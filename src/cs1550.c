@@ -24,11 +24,11 @@
 #define     MAX_EXTENSION   3
 #define     MAX_LENGTH      MAX_FILENAME * 2 + MAX_EXTENSION + 1  // length of dir + filename + extension + NULL
 
+//extern bitmap map;
 
 // How many files can there be in one directory?
 #define     MAX_FILES_IN_DIR (BLOCK_SIZE - sizeof(int)) / ((MAX_FILENAME + 1) + (MAX_EXTENSION + 1) + sizeof(size_t) + sizeof(long))
 
-static bitmap *map = NULL;       // 10240 / sizeof(char) = 1280
 
 // The attribute packed means to not align these things
 struct cs1550_directory_entry
@@ -95,6 +95,7 @@ typedef struct cs1550_disk_block cs1550_disk_block;
 static int cs1550_getattr(const char *path, struct stat *stbuf)
 {
     printf("cs1550_getattr STARTING...\n");
+    printf("cs1550_getattr path=%s\n", path);
     int status = -ENOENT;                   // default is error
 
     // hold the directory, filename, and extension (if any)
@@ -106,6 +107,7 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
     
     // is path the root dir?
     if (strcmp(path, "/") == 0) {           // path is the root dir
+        printf("cs1550_getattr PATH IS ROOT\n");
         stbuf->st_mode = S_IFDIR | 0755;
         stbuf->st_nlink = 2;
 
@@ -114,6 +116,7 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
     } else {
         // make sure path is within maximum length
         if (strlen(path) < MAX_LENGTH) {
+            printf("cs1550_getattr PATH IS LESS THAN MAXLEN. GOOD!\n");
             /*
                 Get the directory and file information
 
@@ -130,6 +133,7 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
                 (strlen(ext) > MAX_EXTENSION))          // make sure extension within max length
             { 
                 // ERROR
+                printf("cs1550_getattr HIT ERROR CASES\n");
 
             } else {
 
@@ -139,17 +143,23 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
                 // make sure could open the disk file
                 if (disk == NULL) {
                     // ERROR
+                    printf("cs1550_getattr DISK IS NULL\n");
 
                 } else {
+                    printf("cs1550_getattr SO FAR SO GOOD, ABOUT TO fread\n");
                     cs1550_root_directory root;                                     // pointer to root of disk file
-                    fread(&root, sizeof(cs1550_root_directory), 1, disk);           // put first 512bytes into root struct
+                    int res = fread(&root, sizeof(cs1550_root_directory), 1, disk);           // put first 512bytes into root struct
+                    printf("cs1550_getattr CALLED fread TO GET ROOT: %d\n", res);
 
                     // search for the directory from list of valid directories 
                     int location;
+                    printf("cs1550_getattr root.nDirectories=%d.\n", root.nDirectories);
                     for (location=0; location < root.nDirectories; location++) {    // loop through valid directories
+                        printf("cs1550_getattr root.directories[location].dname=%s, dir=%s\n", root.directories[location].dname, dir);
                         if (strcmp(root.directories[location].dname, dir) == 0) {
 
                             // found the directory
+                            printf("cs1550_getattr FOUND the directory!\n");
 
                             // if only given a directory, return the directory info
                             if (scan_result == 1) {
@@ -259,7 +269,7 @@ static int cs1550_mkdir(const char *path, mode_t mode)
         status = -ENAMETOOLONG;         // ERROR: directory name too long
         printf("!! ERROR !! DIRECTORY NAME TOO LONG\n");
 
-    } else if ((free_block = find_free_block(map)) == -1) {
+    } else if ((free_block = find_free_block()) == -1) {
         status = -ENOSPC;               // ERROR: no space left on disk
         printf("!! ERROR !! NO SPACE LEFT ON DISK\n");
 
@@ -293,7 +303,7 @@ static int cs1550_mkdir(const char *path, mode_t mode)
                 printf("cs1550_mkdir CREATED cs1550_directory_entry structure\n");
 
                 fseek(disk, free_block * BLOCK_SIZE, SEEK_SET);     // goto free block
-                fwrite(new_dir, sizeof(cs1550_directory_entry), 1, disk);   // write bitmap to disk
+                fwrite(new_dir, sizeof(cs1550_directory_entry), 1, disk);   // write new dir entry to disk
                 printf("cs1550_mkdir SEEKED TO FREE BLOCK %d and wrote dir_entry struct\n", free_block);
 
                 // create root dir struct
@@ -310,6 +320,12 @@ static int cs1550_mkdir(const char *path, mode_t mode)
                 printf("cs1550_mkdir UPDATING root nDirectories by adding new_dir_entry\n");
                 root.directories[root.nDirectories] = *new_dir_entry;   // add directory to list of valid directories
                 root.nDirectories++;
+                printf("cs1550_mkdir nDirectories=%d", root.nDirectories);
+
+                // write out the root to disk
+                printf("cs1550_mkdir WRITING OUT THE NEW ROOT TO DISK\n");
+                fseek(disk, 0, SEEK_SET);     // goto free block
+                fwrite(&root, sizeof(struct cs1550_root_directory), 1, disk);   // write root to disk
 
                 printf("cs1550_mkdir OUTPUTTING new_dir_entry from within root: dname='%s' nstartblock='%lu'\n", root.directories[root.nDirectories-1].dname, root.directories[root.nDirectories-1].nStartBlock);
             }
@@ -323,7 +339,7 @@ static int cs1550_mkdir(const char *path, mode_t mode)
 
         //printf("[%d][%d][%d]\n", map[0], map[1], map[2]);
         //printf("[%s]\n", byte_to_binary(map[1]);
-        write_bitmap(map);      // update the bitmap on disk
+        write_bitmap();      // update the bitmap on disk
         printf("cs1550_mkdir UPDATED BITMAP\n");
     }
 

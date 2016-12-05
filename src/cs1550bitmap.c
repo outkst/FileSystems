@@ -12,6 +12,7 @@
 #include <fcntl.h>
 
 typedef unsigned char bitmap;               /* bitmap data structure */
+static bitmap *map = NULL;       // 10240 / sizeof(char) = 1280
 
 #define MAP_SIZE    1280                    /* bitmap holds 1280 bytes */
 #define BLOCK_SIZE  512                     /* disk's block size */
@@ -21,12 +22,12 @@ typedef unsigned char bitmap;               /* bitmap data structure */
 #define GET_BM_INDEX(i) ((i) / CHAR_BITS)   /* get the correct index into the array */
 #define GET_BIT_OFFSET(i) ((i) % CHAR_BITS) /* get the correct bit in the index */
 
-void init_bitmap(bitmap *map);
-void clear_bit(bitmap *map, int index);
-int get_bit(bitmap *map, int index);
-void set_bit(bitmap *map, int index);
-int find_free_block(bitmap *map);
-void write_bitmap(bitmap *map);
+void init_bitmap();
+void clear_bit(int index);
+int get_bit(int index);
+void set_bit(int index);
+int find_free_block();
+void write_bitmap();
 const char *byte_to_binary(int x);
 //void rebuild_bitmap(bitmap *map, FILE *disk);
 
@@ -34,7 +35,7 @@ const char *byte_to_binary(int x);
     Initializes the bitmap by associating it with the
     given disk file.
 */
-void init_bitmap(bitmap *map) {
+void init_bitmap() {
     printf("init_bitmap INITIALIZING BITMAP...\n");
     FILE *disk = fopen(DISK, "rb");                     // open file with respect to binary mode
     //fclose(disk);
@@ -54,14 +55,14 @@ void init_bitmap(bitmap *map) {
         printf("init_bitmap GRABBED BITMAP FROM LAST 3 BLOCKS ON DISK\n");
 
         // set certain regions of the bitmap to USED
-        set_bit(map, 0);                                // root
+        set_bit(0);                                // root
         printf("init_bitmap SET map AT BIT %d TO 1\n", 0);
         printf("init_bitmap map[0]=%s\n", byte_to_binary(map[0]));
 
         printf("init_bitmap map[%d]=%s\n", 1279, byte_to_binary(map[1279]));
-        set_bit(map, MAX_BITS-3);                       // bitmap start
-        set_bit(map, MAX_BITS-2);                       // bitmap mid
-        set_bit(map, MAX_BITS-1);                       // bitmap end
+        set_bit(MAX_BITS-3);                       // bitmap start
+        set_bit(MAX_BITS-2);                       // bitmap mid
+        set_bit(MAX_BITS-1);                       // bitmap end
         printf("init_bitmap map[%d]=%s\n", 1279, byte_to_binary(map[1279]));
 
         printf("init_bitmap DISK IS %p\n", disk);
@@ -82,7 +83,7 @@ void init_bitmap(bitmap *map) {
 /*
     Sets the bit at the given index to '1' (aka USED)
 */
-void set_bit(bitmap *map, int index) {
+void set_bit(int index) {
     printf("START set_bit-------------------------------------------------------------\n");
     if (map == NULL) { init_bitmap(map); }  // make sure bitmap is initialized
     printf("set_bit MAP AS POINTER= %p\n", map);
@@ -95,7 +96,7 @@ void set_bit(bitmap *map, int index) {
 /*
     Sets the bit at the given index to '0' (aka FREE).
 */
-void clear_bit(bitmap *map, int index) {
+void clear_bit(int index) {
     printf("START clear_bit-------------------------------------------------------------\n");
     if (map == NULL) { init_bitmap(map); }  // make sure bitmap is initialized
 
@@ -106,7 +107,7 @@ void clear_bit(bitmap *map, int index) {
 /*
     Gets the bit at the given index.
 */
-int get_bit(bitmap *map, int index) {
+int get_bit(int index) {
     printf("START get_bit-------------------------------------------------------------\n");
     printf("get_bit MAP AS POINTER= %p\n", map);
     printf("(1) GET_BIT map's POINTER VALUE: %p\n", map);
@@ -120,9 +121,6 @@ int get_bit(bitmap *map, int index) {
 
     printf("get_bit GET_BM_INDEX(%d)=%d\n", index, GET_BM_INDEX(index));
     printf("get_bit GET_BIT_OFFSET(%d)=%d\n", index, GET_BIT_OFFSET(index));
-    
-    // !!!! FAILING HERE
-
     printf("get_bit map[GET_BM_INDEX(%d)]=%d\n", index, map[GET_BM_INDEX(index)]);
     printf("(1 << GET_BIT_OFFSET(%d)) = %d\n", index, (1 << GET_BIT_OFFSET(index)));
     bitmap bit = map[GET_BM_INDEX(index)] & (1 << GET_BIT_OFFSET(index));
@@ -140,21 +138,21 @@ int get_bit(bitmap *map, int index) {
     block zero (0) and the last three blocks because it is the root block
     and the blocks used to store the bitmap, respectively.
 */
-int find_free_block(bitmap *map) {
+int find_free_block() {
     printf("START find_free_block-------------------------------------------------------------\n");
 
     if (map == NULL) { 
         printf("CALLING init_bitmap...\n");
         init_bitmap(map);
-    }  // make sure bitmap is initialized
+    }  // make sure bitmap iswialized
 
     printf("find_free_block MAP AS POINTER= %p\n", map);
-    return 1;
+    //return 1;
 
     int index = 1;                          // skip block 0 aka ROOT
     while (index < MAX_BITS-3) {            // (MAX-3) to skip where bitmap is stored
-        bitmap bit = get_bit(map, index);      // get next bit
-        printf("find_free_block bit=%d", bit);
+        int bit = get_bit(index);      // get next bit
+        printf("find_free_block index=%d, bit=%d", index, bit);
         if (bit == 0) { 
             printf("              -----------------------------------------------END find_free_block\n");
             return index; 
@@ -170,31 +168,36 @@ int find_free_block(bitmap *map) {
 /*
     Takes the given bitmap and writes it out to the DISK.
 */
-void write_bitmap(bitmap *map) {
+void write_bitmap() {
     printf("START write_bitmap-------------------------------------------------------------\n");
     printf("write_bitmap POINTER VALUE OF MAP:%p\n", map);
-    //printf("write_bitmap map[0]=%d\n", map[0]);
 
-    // FOR SOME REASON BITMAP NULL AGAIN
-
-    if (map == NULL) {
-        printf("write_bitmap CALLING INIT BITMAP IN WBMP\n");
-        init_bitmap(map);
-    }      // make sure bitmap is initialized
+    if (map == NULL) { init_bitmap(map); }      // make sure bitmap is initialized
     printf("write_bitmap [%s]\n", byte_to_binary(map[0]));
 
     FILE *disk = fopen(DISK, "r+b");            // open file read/write with respect to binary mode
 
     if (disk == NULL) {
         //return -ENOENT;                       // ERROR: file not opened successfully
-
+        printf("write_bitmap DISK IS NULL\n");
     } else {
         // write the bitmap to the disk file
-        fseek(disk, -(3*BLOCK_SIZE), SEEK_END); // bitmap held in last three blocks of file
-        fwrite(map, MAP_SIZE, 1, disk);         // write bitmap to disk
+        int res;
+        res = fseek(disk, -(3*BLOCK_SIZE), SEEK_END); // bitmap held in last three blocks of file
+        if (res < 0) {
+            printf("write_bitmap ERROR WITH fseek\n");
+        }
 
-        printf("write_bitmap CLOSING DISK FILE");
-        fclose(disk);                           // close the file
+        res = fwrite(map, MAP_SIZE, 1, disk);         // write bitmap to disk
+        if (res < 0) {
+            printf("write_bitmap ERROR WITH fwrite\n");
+        }
+
+        printf("write_bitmap CLOSING DISK FILE\n");
+        res = fclose(disk);                           // close the file
+        if (res < 0) {
+            printf("write_bitmap ERROR WITH CLOSING DISK\n");
+        }
     }
 
     printf("              -----------------------------------------------END write_bitmap\n");
@@ -230,10 +233,10 @@ const char *byte_to_binary(int x)
 
 //     } else {
 //         // set certain regions of the bitmap to USED
-//         set_bit(map, 0);                                        // root
-//         set_bit(map, MAX_BITS-3);                               // bitmap start
-//         set_bit(map, MAX_BITS-2);                               // bitmap mid
-//         set_bit(map, MAX_BITS-1);                                 // bitmap end
+//         set_bit(0);                                        // root
+//         set_bit(MAX_BITS-3);                               // bitmap start
+//         set_bit(MAX_BITS-2);                               // bitmap mid
+//         set_bit(MAX_BITS-1);                                 // bitmap end
 
 //         cs1550_root_directory root;                             // pointer to root of disk file
 //         fread(&root, sizeof(cs1550_root_directory), 1, disk);   // put first 512bytes into root struct
@@ -246,7 +249,7 @@ const char *byte_to_binary(int x)
 //         struct cs1550_disk_block file_block;                    // the current file entry block structure
 //         for (dir_num = 0; dir_num < root.nDirectories; dir_num++) {
 //             // mark this location of the block as USED in the bitmap
-//             set_bit(map, root.directories[dir_num].nStartBlock]);
+//             set_bit(root.directories[dir_num].nStartBlock]);
 
 //             // loop through each directory to find what files exist
 //             //      and the blocks they are using
@@ -268,7 +271,7 @@ const char *byte_to_binary(int x)
 //                 for (block_num=0; block_num < file_block_span; block_num++) {
 //                     fseek(disk, SEEK_SET, block_location);                      // seek to the starting block of this file entry
 //                     fread(&file_block, sizeof(cs1550_disk_block), 1, disk);     // pull this block as a block entry
-//                     set_bit(map, dir_entry.files[file_num].nStartBlock);        // mark the bitmap showing that this block is occupied
+//                     set_bit(dir_entry.files[file_num].nStartBlock);        // mark the bitmap showing that this block is occupied
 //                     block_location = file_block.nNextBlock;                     // get the next block location for this file
 //                 }
 //             }
