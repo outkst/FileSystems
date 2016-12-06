@@ -119,7 +119,7 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
             int scan_result = sscanf(path, "/%[^/]/%[^.].%s", dir, filename, ext);
 
             if ((scan_result == EOF) ||                 // EOF error
-                (scan_result == 0) ||                   // nothing was filled (no dir, no filename, no ext)
+                (scan_result <= 0) ||                   // nothing was filled (no dir, no filename, no ext)
                 (strlen(dir) > MAX_FILENAME) ||         // make sure directory within max length
                 (strlen(filename) > MAX_FILENAME) ||    // make sure filename within max length
                 (strlen(ext) > MAX_EXTENSION))          // make sure extension within max length
@@ -137,7 +137,7 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
 
                 } else {
                     cs1550_root_directory root;                                     // pointer to root of disk file
-                    int res = fread(&root, sizeof(cs1550_root_directory), 1, disk);           // put first 512bytes into root struct
+                    fread(&root, sizeof(cs1550_root_directory), 1, disk);           // put first 512bytes into root struct
 
                     // search for the directory from list of valid directories 
                     int location;
@@ -211,21 +211,95 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     (void) offset;
     (void) fi;
 
-    // This line assumes we have no subdirectories, need to change
-    if (strcmp(path, "/") != 0)
-       return -ENOENT;
+    int status = 0;                 // default to good
 
-    // the filler function allows us to add entries to the listing
-    // read the fuse.h file for a description (in the ../include dir)
-    filler(buf, ".", NULL, 0);
-    filler(buf, "..", NULL, 0);
+    char dir_name[MAX_LENGTH];           // holds directory name
+    char filename[MAX_LENGTH];      // holds filename
+    int num;                        // used to iterate through entries
+
+    // // This line assumes we have no subdirectories, need to change
+    // if (strcmp(path, "/") != 0)
+    //    return -ENOENT;
+    printf("cs1550_readdir path = %s\n", path);
+
+    if (strlen(path) > MAX_LENGTH) {
+        // invalid path
+        status = -ENOENT;                           // ERROR: path is longer than maximum length allowed
+
+    } else {
+        // get the directory, filename, extension
+        int scan_result = sscanf(path, "/%[^/]/%[^.]", dir_name, filename);
+
+        printf("cs1550_readdir scan_result=%d\n", scan_result);
+        printf("cs1550_readdir dir_name=%s\n", dir_name);
+
+        if ((strcmp(path, "/") != 0) && 
+            ((scan_result == EOF) ||                 // EOF error
+            (scan_result <= 0) ||                   // path provided was not root or subdir of root
+            (strlen(dir_name) > MAX_FILENAME)))     // make sure directory within max length
+        { 
+            printf("cs1550_readdir PROPER FAILURE\n");
+            status = -ENOENT;                       // ERROR: given a path that is not a subdir within root
+
+        } else {
+            // open the disk file
+            FILE *disk = fopen(DISK, "rb");         // open with respect to binary mode
+
+            if (disk == NULL) {
+                // ERROR: could not open disk
+
+            } else {
+                printf("cs1550_readdir GOOD\n");
+
+                // the filler function allows us to add entries to the listing
+                filler(buf, ".", NULL, 0);          // default
+                filler(buf, "..", NULL, 0);         // default
+
+                // get reference to the root struct
+                cs1550_root_directory root;                             // pointer to root of disk file
+                fread(&root, sizeof(cs1550_root_directory), 1, disk);   // put first 512bytes into root struct
+
+                if (scan_result <= 0) {
+                    printf("cs1550_readdir LISTING CONTENTS OF ROOT\n");
+
+                    // list contents of root directory (directories only)
+                    for (num=0; num < root.nDirectories; num++) {
+                        filler(buf, root.directories[num].dname, NULL, 0);   // add this directory to the output
+                    }
+                    
+                } else {
+                    // list contents of subdirectory (filenames only)
+                    printf("cs1550_readdir LISTING CONTENTS OF SUBDIR\n");
+
+                    // get the subdirectory's location that was referenced
+                    long offset = 0;
+                    for (num=0; num < root.nDirectories; num++) {
+                        if (strcmp(root.directories[num].dname, dir_name) == 0) {
+                            offset = root.directories[num].nStartBlock * BLOCK_SIZE;   // found the reference
+                        }
+                    }
+
+                    // get reference to subdirectory's contents using offset
+                    cs1550_directory_entry dir_entry;
+                    fseek(disk, offset, SEEK_SET);                                      // goto subdir's location on disk
+                    fread(&dir_entry, sizeof(cs1550_directory_entry), 1, disk);         // read in subdir struct
+
+                    // output the filename, extension, and filesize
+                    for (num=0; num < dir_entry.nFiles; num++) {
+                        filler(buf, dir_entry.files[num].fname + 1, NULL, 0);          // add this file to the output
+                    }
+                }
+                fclose(disk);       // close the disk file
+            }
+        }
+    }
 
     /*
     // add the user stuff (subdirs or files)
     // the +1 skips the leading '/' on the filenames
     filler(buf, newpath + 1, NULL, 0);
     */
-   return 0;
+   return status;
 }
 
 /* 
@@ -245,7 +319,7 @@ static int cs1550_mkdir(const char *path, mode_t mode)
     //      it's not within the root directory
     int scan_result = sscanf(path, "/%[^/]/%[^.]", dir_name, file);
 
-    printf("cs1550_mkdir scan_result = %d\n", scan_result);
+    //printf("cs1550_mkdir scan_result = %d\n", scan_result);
 
     if (scan_result != 1) {
         status = -EPERM;                // ERROR: can ONLY create dir within '/' root
@@ -279,34 +353,34 @@ static int cs1550_mkdir(const char *path, mode_t mode)
                 cs1550_directory_entry *new_dir;                    // create a new directory struct to put in free block
                 new_dir = (struct cs1550_directory_entry*)calloc(1, sizeof(struct cs1550_directory_entry));
                 new_dir->nFiles = 0;                                // no files exist at first
-                printf("cs1550_mkdir CREATED cs1550_directory_entry structure\n");
+                //printf("cs1550_mkdir CREATED cs1550_directory_entry structure\n");
 
                 fseek(disk, free_block * BLOCK_SIZE, SEEK_SET);     // goto free block
                 fwrite(new_dir, sizeof(cs1550_directory_entry), 1, disk);   // write new dir entry to disk
-                printf("cs1550_mkdir SEEKED TO FREE BLOCK %d and wrote dir_entry struct\n", free_block);
+                //printf("cs1550_mkdir SEEKED TO FREE BLOCK %d and wrote dir_entry struct\n", free_block);
 
                 // create root dir struct
                 struct cs1550_directory *new_dir_entry;            // create a new directory stub
                 new_dir_entry = (struct cs1550_directory*)calloc(1, sizeof(struct cs1550_directory));
-                printf("cs1550_mkdir CREATED cs1550_directory structure\n");
+                //printf("cs1550_mkdir CREATED cs1550_directory structure\n");
 
                 strcpy(new_dir_entry->dname, dir_name);            // name of the actual directory
-                printf("cs1550_mkdir COPIED dir_name '%s' to cs1550_directory struct dname '%s'\n", dir_name, new_dir_entry->dname);
+                //printf("cs1550_mkdir COPIED dir_name '%s' to cs1550_directory struct dname '%s'\n", dir_name, new_dir_entry->dname);
 
                 new_dir_entry->nStartBlock = free_block;           // make the start block the beginning of the free block found
-                printf("cs1550_mkdir COPIED free_block '%d' to new_dir_entry.nStartBlock '%lu'\n", free_block, new_dir_entry->nStartBlock);
+                //printf("cs1550_mkdir COPIED free_block '%d' to new_dir_entry.nStartBlock '%lu'\n", free_block, new_dir_entry->nStartBlock);
 
-                printf("cs1550_mkdir UPDATING root nDirectories by adding new_dir_entry\n");
+                //printf("cs1550_mkdir UPDATING root nDirectories by adding new_dir_entry\n");
                 root.directories[root.nDirectories] = *new_dir_entry;   // add directory to list of valid directories
                 root.nDirectories++;
-                printf("cs1550_mkdir nDirectories=%d", root.nDirectories);
+                //printf("cs1550_mkdir nDirectories=%d", root.nDirectories);
 
                 // write out the root to disk
-                printf("cs1550_mkdir WRITING OUT THE NEW ROOT TO DISK\n");
+                //printf("cs1550_mkdir WRITING OUT THE NEW ROOT TO DISK\n");
                 fseek(disk, 0, SEEK_SET);     // goto free block
                 fwrite(&root, sizeof(struct cs1550_root_directory), 1, disk);   // write root to disk
 
-                printf("cs1550_mkdir OUTPUTTING new_dir_entry from within root: dname='%s' nstartblock='%lu'\n", root.directories[root.nDirectories-1].dname, root.directories[root.nDirectories-1].nStartBlock);
+                //printf("cs1550_mkdir OUTPUTTING new_dir_entry from within root: dname='%s' nstartblock='%lu'\n", root.directories[root.nDirectories-1].dname, root.directories[root.nDirectories-1].nStartBlock);
             }
         }
     }
@@ -364,6 +438,7 @@ static int cs1550_read(const char *path, char *buf, size_t size, off_t offset,
     (void) fi;
     (void) path;
 
+    // 
     // check to make sure path exists
     // check that size is > 0
     // check that offset is <= to the file size
