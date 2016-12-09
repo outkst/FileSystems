@@ -18,22 +18,22 @@ typedef unsigned char bitmap;       /* bitmap data structure */
                                         (5,242,880bytes AKA 41,943,040bits | [dd bs=1K count=5K if=/dev/zero of=.disk]) */
 #define SIZEOF_BITMAP  8            /* size, in bits, of the data type used for the bitmap. 
                                         (needed because C doesn't have a 'bit' data type) */
-#define MAP_SIZE_IN_BYTES           DISK_SIZE / BLOCK_SIZE                  /* total size, in bytes, needed for the bitmap (==10240) */
-#define MAP_INDICES                 MAP_SIZE_IN_BYTES / SIZEOF_BITMAP       /* total number of indices for the bitmap (==1280) */
-#define MAP_DISK_BLOCKS_NEEDED      1 + ((MAP_INDICES - 1) / BLOCK_SIZE)    /* how many blocks, on disk, required to hold the bitmap */
+#define MAP_SIZE                    (DISK_SIZE / BLOCK_SIZE)                /* total size, in bytes, needed for the bitmap (==10240) */
+#define MAP_INDICES                 (MAP_SIZE / SIZEOF_BITMAP)              /* total number of indices for the bitmap (==1280) */
+#define MAP_DISK_BLOCKS_NEEDED      (1 + ((MAP_INDICES - 1) / BLOCK_SIZE))  /* how many blocks, on disk, required to hold the bitmap */
 #define GET_BM_INDEX(i)             ((i) / SIZEOF_BITMAP)                   /* given a disk file index, returns an index into the bitmap array */
 #define GET_BIT_OFFSET(i)           ((i) % SIZEOF_BITMAP)                   /* returns a single bit in the index */
 
-static bitmap *map = NULL;                  /* will be MAP_SIZE_IN_BYTES when intialized */
+static bitmap *map = NULL;              /* will be MAP_SIZE when intialized */
 
-void clear_bit(int index);                  /* clears the bit at a given disk file index */
-int find_free_block(void);                  /* finds a free block by looking at the bitmap */
-int get_bit(int index);                     /* gets the bit at the given disk file index */
-void init_bitmap(void);                     /* initializes the bitmap by zero'ing and setting defaults */
-void set_bit(int index);                    /* sets the bit at the given disk file index */
-void write_bitmap(void);                    /* writes out the bitmap to the very end of the disk file */
+void clear_bit(int index);              /* clears the bit at a given disk file index */
+int find_free_block(void);              /* finds a free block by looking at the bitmap */
+int get_bit(int index);                 /* gets the bit at the given disk file index */
+void init_bitmap(void);                 /* initializes the bitmap by zero'ing and setting defaults */
+void set_bit(int index);                /* sets the bit at the given disk file index */
+void write_bitmap(void);                /* writes out the bitmap to the very end of the disk file */
 
-const char *byte_to_binary(int x);          /* used to debug and output the bit-state of a bitmap's index */
+const char *byte_to_binary(int x);      /* used to debug and output the bit-state of a bitmap's index */
 
 
 /*
@@ -57,15 +57,14 @@ void init_bitmap(void) {
 
     } else {
         // allocate the needed space for map
-        map = calloc(MAP_SIZE_IN_BYTES, 1);                  // use defined size, in bytes
-        printf("[init_bitmap] ALLOCATED %d SPACE FOR map\n", MAP_SIZE_IN_BYTES);
-        printf("[init_bitmap] map[0]=%s\n", byte_to_binary(map[0]));
+        map = calloc(MAP_SIZE, 1);                  // use defined size, in bytes
 
         // get the bitmap from the disk file
-        long offset = BLOCK_SIZE * MAP_DISK_BLOCKS_NEEDED;  // bitmap held in last three blocks of file
+        int offset = BLOCK_SIZE * MAP_DISK_BLOCKS_NEEDED;   // bitmap held in last three blocks of file
+    
         fseek(disk, -(offset), SEEK_END);                   // set position to beginning of bitmap struct
-        fread(map, MAP_SIZE_IN_BYTES, 1, disk);             // read the bitmap in from disk
-        printf("[init_bitmap] GRABBED MAP FROM LAST %d BLOCKS ON DISK, STARTING AT -%lu\n", MAP_DISK_BLOCKS_NEEDED, offset);
+        fread(map, MAP_SIZE, 1, disk);                      // read the bitmap in from disk
+        printf("[init_bitmap] GRABBED MAP FROM LAST %d BLOCKS ON DISK, STARTING AT -%d\n", MAP_DISK_BLOCKS_NEEDED, offset);
 
         // set special regions of the bitmap to USED
         set_bit(0);                                         // reserve this space for the root struct
@@ -74,8 +73,7 @@ void init_bitmap(void) {
         // set the needed amount of bits to reserve space for the bitmap
         int i;
         for (i=1; i<=MAP_DISK_BLOCKS_NEEDED; i++) {
-            printf("i=%d, MAP_INDICES=%d\n", i, MAP_INDICES);
-            set_bit(MAP_INDICES-i);                         // reserve this space for the bitmap struct
+            set_bit(MAP_SIZE-i);                            // reserve this space for the bitmap struct
         }
         
         fclose(disk);                                       // close the disk file
@@ -92,9 +90,9 @@ void set_bit(int index) {
 
     if (map == NULL) { init_bitmap(); }  // make sure bitmap is initialized
 
-    //printf("[set_bit] BEFORE: diskfile-index=%d AKA map[%d]: %s\n", index, GET_BM_INDEX(index), byte_to_binary(map[GET_BM_INDEX(index)]));
+    printf("[set_bit] BEFORE: diskfile-index=%d AKA map[%d]: %s\n", index, GET_BM_INDEX(index), byte_to_binary(map[GET_BM_INDEX(index)]));
     map[GET_BM_INDEX(index)] |= (1 << GET_BIT_OFFSET(index));
-    //printf("[set_bit] AFTER: diskfile-index=%d AKA map[%d]: %s\n", index, GET_BM_INDEX(index), byte_to_binary(map[GET_BM_INDEX(index)]));
+    printf("[set_bit] AFTER: diskfile-index=%d AKA map[%d]: %s\n", index, GET_BM_INDEX(index), byte_to_binary(map[GET_BM_INDEX(index)]));
 
     //printf("--------------------------------------------------------------------------[END set_bit]\n");
 }
@@ -139,7 +137,7 @@ int find_free_block(void) {
     if (map == NULL) { init_bitmap(); }                         // make sure bitmap is initialized
 
     int index = 1;                                              // skip block 0 aka ROOT struct
-    int disk_end = MAP_INDICES - MAP_DISK_BLOCKS_NEEDED;        // skip where MAP struct is stored
+    int disk_end = MAP_SIZE - MAP_DISK_BLOCKS_NEEDED;           // skip where MAP struct is stored
     while (index < disk_end) {
         int bit = get_bit(index);                               // get next bit
         if (bit == 0) { 
@@ -148,7 +146,6 @@ int find_free_block(void) {
             printf("--------------------------------------------------------------------------[END find_free_block]\n\n");
             return index;                                       // found a free block
         }
-
         index++;
     }
     printf("--------------------------------------------------------------------------[END find_free_block]\n\n");
@@ -174,7 +171,7 @@ void write_bitmap(void) {
         // write the bitmap to the disk file
         long offset = BLOCK_SIZE * MAP_DISK_BLOCKS_NEEDED;  // bitmap held in last three blocks of file
         fseek(disk, -(offset), SEEK_END);                   // bitmap held in last three blocks of file
-        fwrite(map, MAP_SIZE_IN_BYTES, 1, disk);            // write bitmap to disk
+        fwrite(map, MAP_SIZE, 1, disk);                     // write bitmap to disk
         fclose(disk);                                       // close the file
     }
 
