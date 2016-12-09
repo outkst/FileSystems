@@ -17,10 +17,10 @@
 #include <errno.h>
 #include <fcntl.h>
 
-#define     BLOCK_SIZE      512     // disk's block size
-#define     DISK            ".disk"    // keep reference to our .disk file
-#define     MAX_FILENAME    8       // 8.3 filenames
-#define     MAX_EXTENSION   3
+#define     BLOCK_SIZE      512         // disk's block size
+#define     DISK            ".disk"     // keep reference to our .disk file
+#define     MAX_FILENAME    8           // 8.3 filenames
+#define     MAX_EXTENSION   3           // 8.3 filenames
 #define     MAX_LENGTH      MAX_FILENAME * 2 + MAX_EXTENSION + 1  // length of dir + filename + extension + NULL
 
 // How many files can there be in one directory?
@@ -45,7 +45,7 @@ struct cs1550_directory_entry
     char padding[BLOCK_SIZE - MAX_FILES_IN_DIR * sizeof(struct cs1550_file_directory) - sizeof(int)];
 };
 
-typedef struct cs1550_root_directory cs1550_root_directory;
+
 
 #define MAX_DIRS_IN_ROOT (BLOCK_SIZE - sizeof(int)) / ((MAX_FILENAME + 1) + sizeof(long))
 
@@ -64,7 +64,7 @@ struct cs1550_root_directory
     char padding[BLOCK_SIZE - MAX_DIRS_IN_ROOT * sizeof(struct cs1550_directory) - sizeof(int)];
 };
 
-typedef struct cs1550_directory_entry cs1550_directory_entry;
+
 
 // How much data can one block hold?
 #define    MAX_DATA_IN_BLOCK (BLOCK_SIZE - sizeof(long))
@@ -80,14 +80,23 @@ struct cs1550_disk_block
     char data[MAX_DATA_IN_BLOCK];
 };
 
+typedef struct cs1550_root_directory cs1550_root_directory;
+typedef struct cs1550_directory_entry cs1550_directory_entry;
 typedef struct cs1550_disk_block cs1550_disk_block;
 
+
 /*
- * Called whenever the system wants to know the file attributes, including
- * simply whether the file exists or not. 
- *
- * man -s 2 stat will show the fields of a stat structure
- */
+    Looks up the input path to determine if it is a directory
+        or a file. If it is a directory, return the appropriate
+        permissions. If it is a file, return the appropriate
+        permissions AND actual size. The size returned is accurate
+        enough to determine EOF.
+
+    RETURNS:    0           SUCCESS
+                -ENOENT     path/file not found
+
+    REFERENCE:  man -s 2 stat
+*/
 static int cs1550_getattr(const char *path, struct stat *stbuf)
 {
     int status = -ENOENT;                   // default is error
@@ -141,7 +150,7 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
 
                     // search for the directory from list of valid directories 
                     int location;
-                    printf("cs1550_getattr root.nDirectories=%d.\n", root.nDirectories);
+                    printf("[cs1550_getattr] root.nDirectories=%d.\n", root.nDirectories);
                     for (location=0; location < root.nDirectories; location++) {    // loop through valid directories
                         if (strcmp(root.directories[location].dname, dir) == 0) {
 
@@ -198,10 +207,19 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
     return status;
 }
 
-/* 
- * Called whenever the contents of a directory are desired. Could be from an 'ls'
- * or could even be when a user hits TAB to do autocompletion
- */
+
+/*
+    looks up the input path, ensuring that it is a directory, and then
+        lists the contents of that path. Uses include 'stat', 'ls -a',
+        or even TAB completion from terminal.
+
+    NOTE: The output is emulated within FUSE by using the filler() method
+
+    RETURNS:    0           SUCCESS
+                -ENOENT     directory is not valid, or not found
+
+    REFERENCE: man -s 2 readdir
+*/
 static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     off_t offset, struct fuse_file_info *fi)
 {
@@ -213,7 +231,7 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
     int status = 0;                 // default to good
 
-    char dir_name[MAX_LENGTH];           // holds directory name
+    char dir_name[MAX_LENGTH];      // holds directory name
     char filename[MAX_LENGTH];      // holds filename
     int num;                        // used to iterate through entries
 
@@ -234,7 +252,7 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         printf("cs1550_readdir dir_name=%s\n", dir_name);
 
         if ((strcmp(path, "/") != 0) && 
-            ((scan_result == EOF) ||                 // EOF error
+            ((scan_result == EOF) ||                // EOF error
             (scan_result <= 0) ||                   // path provided was not root or subdir of root
             (strlen(dir_name) > MAX_FILENAME)))     // make sure directory within max length
         { 
@@ -302,10 +320,20 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
    return status;
 }
 
-/* 
-    Creates a directory. We can ignore mode since we're not dealing with
-    permissions, as long as getattr returns appropriate ones for us.
- */
+
+/*
+    Adds the new directory to the root level ONLY, and updates
+        the .disk file appropriately by adding an entry in the 
+        root's list of directories and pointing to an entry for
+        the new directory within block on disk.
+
+    RETURNS:    0               SUCCESS
+                -ENAMETOOLONG   directory name too long
+                -EPERM          directory is not within the root directory
+                -EEXIST         directory already exists
+                -ENOSPC         no space left on disk to create
+                -ENOENT         disk file could not be opened
+*/
 static int cs1550_mkdir(const char *path, mode_t mode)
 {
     (void) mode;
@@ -346,7 +374,7 @@ static int cs1550_mkdir(const char *path, mode_t mode)
 
             // make sure the root can hold another directory listing
             if (root.nDirectories >= MAX_DIRS_IN_ROOT) {
-                status = -ENOMEM;                                   // ERROR: not enough space
+                status = -ENOSPC;                                   // ERROR: not enough space
 
             } else {
                 // create directory inside the free block
@@ -390,11 +418,12 @@ static int cs1550_mkdir(const char *path, mode_t mode)
         fclose(disk);           // close the disk
         write_bitmap();         // update the bitmap on disk
         
-        printf("cs1550_mkdir UPDATED BITMAP\n");
+        printf("cs1550_mkdir UPDATED BITMAP. max dirs allowed in root: %lu\n", MAX_DIRS_IN_ROOT);
     }
 
     return status;
 }
+
 
 /* 
  * Removes a directory.
@@ -405,16 +434,39 @@ static int cs1550_rmdir(const char *path)
     return 0;
 }
 
-/* 
- * Does the actual creation of a file. Mode and dev can be ignored.
- *
- */
+
+/*
+    Does the actual creation of a file. Mode and dev can be ignored.
+
+    Adds a new file to a subdirectory, and updates the .disk file
+    appropriately with the modified directory entry structure.
+
+    root->directories[dir_num].nStartBlock
+    directory_entry
+    file_directory
+
+    RETURNS:    0               SUCCESS
+                -ENAMETOOLONG   file name is beyond 8.3 characters
+                -EPERM          file is trying to be created in root dir
+                -EEXIST         file already exists
+
+    REFERENCE: man -s 2 mknod
+*/
 static int cs1550_mknod(const char *path, mode_t mode, dev_t dev)
 {
     (void) mode;
     (void) dev;
-    return 0;
+
+    int status = 0;         // assume SUCCESS
+
+
+
+
+
+
+    return status;
 }
+
 
 /*
  * Deletes a file
@@ -425,6 +477,7 @@ static int cs1550_unlink(const char *path)
 
     return 0;
 }
+
 
 /* 
  * Read size bytes from file into buf starting from offset
@@ -450,6 +503,7 @@ static int cs1550_read(const char *path, char *buf, size_t size, off_t offset,
     return size;
 }
 
+
 /* 
  * Write size bytes from buf into file starting from offset
  *
@@ -470,6 +524,7 @@ static int cs1550_write(const char *path, const char *buf, size_t size,
 
     return size;
 }
+
 
 /******************************************************************************
  *
@@ -517,6 +572,7 @@ static int cs1550_open(const char *path, struct fuse_file_info *fi)
     return 0; // success!
 }
 
+
 /*
  * Called when close is called on a file descriptor, but because it might
  * have been dup'ed, this isn't a guarantee we won't ever need the file 
@@ -546,6 +602,7 @@ static struct fuse_operations hello_oper = {
     .flush      = cs1550_flush,
     .open       = cs1550_open,
 };
+
 
 // Don't change this.
 int main(int argc, char *argv[])
