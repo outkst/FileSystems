@@ -1,14 +1,19 @@
 /*
-    MAP IMPLEMENTATION BASED ON:
+    File System Implementation
 
-    http://stackoverflow.com/a/1226129
-    www.mathcs.emory.edu/~cheung/Courses/255/Syllabus/1-C-intro/bit-array.html
+    Joe Meszar (jwm54@pitt.edu)
+    CS1550 Project 4 (FALL 2016)
+
+    REFERENCES
+    ----------
+    BITMAP:                     www.mathcs.emory.edu/~cheung/Courses/255/Syllabus/1-C-intro/bit-array.html
+    BYTE-TO-BINARY:             http://stackoverflow.com/a/112956
+    CEILING INTEGER DIVISION:   http://stackoverflow.com/a/2745086
 */
 
-#include <stdio.h>
-#include <string.h>
-#include <errno.h>
-#include <fcntl.h>
+#include <stdio.h>                  /* FILE SEEK_END printf() */
+#include <string.h>                 /* strcat() */
+#include <errno.h>                  /* ENOENT */
 
 typedef unsigned char bitmap;       /* bitmap data structure */
 
