@@ -138,10 +138,10 @@ static long find_directory(char *dir_name) {
 
     RETURNS: The cs1550_file_directory struct of the given filename/extension; otherwise NULL.
 */
-static cs1550_file_directory *find_file(long dir_start_block, char *file_name, char *ext_name) {
+static cs1550_file_directory *get_file(long dir_start_block, char *file_name, char *ext_name) {
     cs1550_file_directory *disk_file = NULL;                    // assume file does not exist
 
-    printf("[find_file] dir_start_block=%lu, file_name=%s, ext_name=%s\n", dir_start_block, file_name, ext_name);
+    printf("[get_file] dir_start_block=%lu, file_name=%s, ext_name=%s\n", dir_start_block, file_name, ext_name);
 
     // open the disk file
     FILE *disk = fopen(DISK, "rb");                             // open with respect to binary mode
@@ -157,7 +157,7 @@ static cs1550_file_directory *find_file(long dir_start_block, char *file_name, c
 
         // search for the file within the list of valid files
         int i;
-        printf("[find_file] dir.nFiles=%d.\n", dir.nFiles);
+        printf("[get_file] dir.nFiles=%d.\n", dir.nFiles);
         for (i=0; i < dir.nFiles; i++) {                        // loop through valid files
             if (strcmp(dir.files[i].fname, file_name) == 0) {
                 if (strcmp(dir.files[i].fext, ext_name)) {
@@ -246,7 +246,7 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
 
                     // find the filename (if it exists)
                     cs1550_file_directory *file;
-                    file = find_file(dir_block, filename, ext);
+                    file = get_file(dir_block, filename, ext);
 
                     if (file == NULL) {
                         // FILE NOT FOUND
