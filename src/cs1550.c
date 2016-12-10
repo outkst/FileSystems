@@ -88,6 +88,7 @@ struct cs1550_disk_block
 
 typedef struct cs1550_root_directory cs1550_root_directory;
 typedef struct cs1550_directory_entry cs1550_directory_entry;
+typedef struct cs1550_file_directory cs1550_file_directory;
 typedef struct cs1550_disk_block cs1550_disk_block;
 
 /*
@@ -96,10 +97,10 @@ typedef struct cs1550_disk_block cs1550_disk_block;
 
     RETURNS: The start block of the given directory; otherwise '-1'.
 */
-static long findDirectory(char *dir_name) {
+static long find_directory(char *dir_name) {
     long index = -1;                        // assume directory does not exist
 
-    printf("[findDirectory] dir_name=%s\n", dir_name);
+    printf("[find_directory] dir_name=%s\n", dir_name);
 
     // open the disk file
     FILE *disk = fopen(DISK, "rb");         // open with respect to binary mode
@@ -109,15 +110,16 @@ static long findDirectory(char *dir_name) {
         // ERROR
 
     } else {
-        cs1550_root_directory *root;                                // pointer to root of disk file
-        fread(root, sizeof(cs1550_root_directory), 1, disk);        // put first 512bytes into root struct
+        printf("[find_directory] \n");
+        cs1550_root_directory root;                                 // pointer to root of disk file
+        fread(&root, sizeof(cs1550_root_directory), 1, disk);       // root struct is in first block of disk
 
         // search for the directory within the list of valid directories
         int i;
-        printf("[findDirectory] root.nDirectories=%d.\n", root->nDirectories);
-        for (i=0; i < root->nDirectories; i++) {                     // loop through valid directories
-            if (strcmp(root->directories[i].dname, dir_name) == 0) {
-                index = root->directories[i].nStartBlock;            // found the directory
+        printf("[find_directory] root.nDirectories=%d.\n", root.nDirectories);
+        for (i=0; i < root.nDirectories; i++) {                     // loop through valid directories
+            if (strcmp(root.directories[i].dname, dir_name) == 0) {
+                index = root.directories[i].nStartBlock;            // found the directory
                 break;
             }
         }
@@ -131,44 +133,44 @@ static long findDirectory(char *dir_name) {
 
 /*
     Searches a directory structure at the given start block
-    for the given filename and extension. Returns the starting
-    block of the file.
+    for the given filename and extension. Returns the file
+    struct if found.
 
-    RETURNS: The start block of the given file; otherwise '-1'.
+    RETURNS: The cs1550_file_directory struct of the given filename/extension; otherwise NULL.
 */
-static long findFile(long dir_start_block, char *file_name, char *ext_name) {
-    long index = -1;                        // assume file does not exist
+static cs1550_file_directory *find_file(long dir_start_block, char *file_name, char *ext_name) {
+    cs1550_file_directory *disk_file = NULL;                    // assume file does not exist
 
-    printf("[findFile] dir_start_block=%lu, file_name=%s, ext_name=%s\n", dir_start_block, file_name, ext_name);
+    printf("[find_file] dir_start_block=%lu, file_name=%s, ext_name=%s\n", dir_start_block, file_name, ext_name);
 
     // open the disk file
-    FILE *disk = fopen(DISK, "rb");         // open with respect to binary mode
+    FILE *disk = fopen(DISK, "rb");                             // open with respect to binary mode
 
     // make sure could open the disk file
     if (disk == NULL) {
         // ERROR
 
     } else {
-        cs1550_directory_entry *dir;                                // pointer to dir of disk file
-        fseek(disk, dir_start_block * BLOCK_SIZE, SEEK_SET);        // seek to the starting block of dir struct
-        fread(dir, sizeof(cs1550_directory_entry), 1, disk);        // get the directory at this start block
+        cs1550_directory_entry dir;                             // pointer to dir of disk file
+        fseek(disk, dir_start_block * BLOCK_SIZE, SEEK_SET);    // seek to the starting block of dir struct
+        fread(&dir, sizeof(cs1550_directory_entry), 1, disk);   // get the directory at this start block
 
         // search for the file within the list of valid files
         int i;
-        printf("[findFile] dir.nFiles=%d.\n", dir->nFiles);
-        for (i=0; i < dir->nFiles; i++) {                           // loop through valid files
-            if (strcmp(dir->files[i].fname, file_name) == 0) {
-                if (strcmp(dir->files[i].fext, ext_name)) {
-                    index = dir->files[i].nStartBlock;              // found the file
+        printf("[find_file] dir.nFiles=%d.\n", dir.nFiles);
+        for (i=0; i < dir.nFiles; i++) {                        // loop through valid files
+            if (strcmp(dir.files[i].fname, file_name) == 0) {
+                if (strcmp(dir.files[i].fext, ext_name)) {
+                    disk_file = &dir.files[i];                  // found the file
                     break;
                 }
             }
         }
 
-        fclose(disk);                                               // close the disk
+        fclose(disk);                                           // close the disk
     }
 
-    return index;
+    return disk_file;
 }
 
 /*
@@ -185,19 +187,21 @@ static long findFile(long dir_start_block, char *file_name, char *ext_name) {
 */
 static int cs1550_getattr(const char *path, struct stat *stbuf)
 {
+    // hold method's status
     int status = -ENOENT;                   // default is error
 
-    // hold the directory, filename, and extension (if any)
-    char *dir[MAX_LENGTH];
-    char *filename[MAX_LENGTH];
-    char *ext[MAX_LENGTH];
+    // hold info about the path
+    char dir[MAX_LENGTH];                   // directory name
+    char filename[MAX_LENGTH];              // file name
+    char ext[MAX_LENGTH];                   // file extension name
 
+    // initialize to hold dir/file info
     memset(stbuf, 0, sizeof(struct stat));
     
     // is path the root dir?
     if (strcmp(path, "/") == 0) {           // path is the root dir
-        stbuf->st_mode = S_IFDIR | 0755;
-        stbuf->st_nlink = 2;
+        stbuf->st_mode = S_IFDIR | 0755;    // file type and mode
+        stbuf->st_nlink = 2;                // number of hard links
 
         status = 0;                         // SUCCESS
 
@@ -205,7 +209,7 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
         // make sure path is within maximum length
         if (strlen(path) < MAX_LENGTH) {
             /*
-                Get the directory and file information
+                Get the directory and file information from the path
 
                 On success, the function returns the number of variables filled. 
                 In the case of an input failure before any data could be successfully read, 
@@ -223,125 +227,38 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
 
             } else {
                 // find the directory (if it exists)
-                long dir_block = findDirectory(dir);     // returns the starting block of the directory entry
+                printf("[cs1550_getattr] calling find_directory with dir=%s\n", dir);
+                long dir_block = find_directory(dir);       // returns the starting block of the directory entry
+                printf("[cs1550_getattr] dir_block=%lu\n", dir_block);
+                if (dir_block < 0) {
+                    // DIRECTORY NOT FOUND
 
-                if (dir_block < 0) {                    // DIRECTORY NOT FOUND
-                    // directory not found
+                } else if (scan_result == 1) {              // RETURN DIRECTORY INFO
 
-                } else if (scan_result == 1) {          // RETURN DIRECTORY INFO
+                    stbuf->st_mode = S_IFDIR | 0755;        // file type and mode
+                    stbuf->st_nlink = 2;                    // number of hard links
 
-                    stbuf->st_mode = S_IFDIR | 0755;    // set file type and mode
-                    stbuf->st_nlink = 2;                // set number of HARD links
-                    status = 0;                         // SUCCESS
+                    status = 0;                             // SUCCESS
 
-                } else {                                // RETURN FILE INFO
+                } else {                                    // RETURN FILE INFO
+
+                    if (scan_result == 2) { ext[0] = '\0';} // make extension NULL if blank
+
                     // find the filename (if it exists)
-                    long file_block = findFile(dir_block, filename, ext);
+                    cs1550_file_directory *file;
+                    file = find_file(dir_block, filename, ext);
 
-                    if (file_block < 0) {               // FILE NOT FOUND
-                        // file not found
+                    if (file == NULL) {
+                        // FILE NOT FOUND
 
-                    } else {                            // RETURN FILE INFO
-
-
+                    } else {                                // RETURN FILE INFO
+                        // found the file
+                        stbuf->st_mode = S_IFREG | 0666;    // file type and mode
+                        stbuf->st_nlink = 1;                // number of hard links
+                        stbuf->st_size = file->fsize;       // total file size, in bytes
+                        
+                        status = 0;                         // SUCCESS
                     }
-
-
-
-
-
-
-                    // check if file exists by getting directory and looking through it
-                    // fseek returns 0 if upon success; otherwise -1
-                    int fseekret = fseek(disk, root.directories[location].nStartBlock * BLOCK_SIZE, SEEK_SET);
-
-                    if (fseekret == 0) {
-                        cs1550_directory_entry working_dir;
-                        fread(&working_dir, sizeof(cs1550_directory_entry), 1, disk);   // put first 512bytes into root struct
-
-                        if (scan_result == 2) { ext[0] = '\0';}                         // make extension NULL if blank
-
-                        // loop over files to see if file actually exists (fname fext)
-                        int file_location;
-                        for (file_location=0; file_location < working_dir.nFiles; file_location++) {
-                            if ((strcmp(working_dir.files[file_location].fname, filename) == 0) 
-                                && (strcmp(working_dir.files[file_location].fext, ext) == 0)) {
-
-                                // found the file
-                                stbuf->st_mode = S_IFREG | 0666; 
-                                stbuf->st_nlink = 1;                // file links
-                                stbuf->st_size = 0;                 // file size - make sure you replace with real size!
-                                
-                                status = 0;                         // SUCCESS
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                // open the disk file
-                FILE *disk = fopen(DISK, "rb");         // open with respect to binary mode
-
-                // make sure could open the disk file
-                if (disk == NULL) {
-                    // ERROR
-
-                } else {
-                    
-                    cs1550_root_directory root;                                     // pointer to root of disk file
-                    fread(&root, sizeof(cs1550_root_directory), 1, disk);           // put first 512bytes into root struct
-
-                    // search for the directory from list of valid directories 
-                    int location;
-                    printf("[cs1550_getattr] root.nDirectories=%d.\n", root.nDirectories);
-                    for (location=0; location < root.nDirectories; location++) {    // loop through valid directories
-                        if (strcmp(root.directories[location].dname, dir) == 0) {
-
-                            // found the directory
-
-                            // if only given a directory, return the directory info
-                            if (scan_result == 1) {
-                                // only given directory
-                                stbuf->st_mode = S_IFDIR | 0755;
-                                stbuf->st_nlink = 2;
-                                
-                                status = 0;                         // SUCCESS 
-                                
-                            } else {
-                                // path contained a filename
-
-                                // check if file exists by getting directory and looking through it
-                                // fseek returns 0 if upon success; otherwise -1
-                                int fseekret = fseek(disk, root.directories[location].nStartBlock * BLOCK_SIZE, SEEK_SET);
-
-                                if (fseekret == 0) {
-                                    cs1550_directory_entry working_dir;
-                                    fread(&working_dir, sizeof(cs1550_directory_entry), 1, disk);   // put first 512bytes into root struct
-
-                                    if (scan_result == 2) { ext[0] = '\0';}                         // make extension NULL if blank
-
-                                    // loop over files to see if file actually exists (fname fext)
-                                    int file_location;
-                                    for (file_location=0; file_location < working_dir.nFiles; file_location++) {
-                                        if ((strcmp(working_dir.files[file_location].fname, filename) == 0) 
-                                            && (strcmp(working_dir.files[file_location].fext, ext) == 0)) {
-
-                                            // found the file
-                                            stbuf->st_mode = S_IFREG | 0666; 
-                                            stbuf->st_nlink = 1;                // file links
-                                            stbuf->st_size = 0;                 // file size - make sure you replace with real size!
-                                            
-                                            status = 0;                         // SUCCESS
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            break;
-                        }
-                    }
-
-                    fclose(disk);   // close the disk
                 }
             }
         }
@@ -415,15 +332,15 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                 filler(buf, "..", NULL, 0);         // default
 
                 // get reference to the root struct
-                cs1550_root_directory root;                             // pointer to root of disk file
-                fread(&root, sizeof(cs1550_root_directory), 1, disk);   // put first 512bytes into root struct
+                cs1550_root_directory root;                                 // pointer to root of disk file
+                fread(&root, sizeof(cs1550_root_directory), 1, disk);       // put first 512bytes into root struct
 
                 if (scan_result <= 0) {
                     printf("[cs1550_readdir] LISTING CONTENTS OF ROOT\n");
 
                     // list contents of root directory (directories only)
                     for (num=0; num < root.nDirectories; num++) {
-                        filler(buf, root.directories[num].dname, NULL, 0);   // add this directory to the output
+                        filler(buf, root.directories[num].dname, NULL, 0);  // add this directory to the output
                     }
                     
                 } else {
@@ -434,7 +351,7 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                     long offset = 0;
                     for (num=0; num < root.nDirectories; num++) {
                         if (strcmp(root.directories[num].dname, dir_name) == 0) {
-                            offset = root.directories[num].nStartBlock * BLOCK_SIZE;   // found the reference
+                            offset = root.directories[num].nStartBlock * BLOCK_SIZE;    // found the reference
                         }
                     }
 
@@ -445,7 +362,7 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
                     // output the filename, extension, and filesize
                     for (num=0; num < dir_entry.nFiles; num++) {
-                        filler(buf, dir_entry.files[num].fname + 1, NULL, 0);          // add this file to the output
+                        filler(buf, dir_entry.files[num].fname + 1, NULL, 0);           // add this file to the output
                     }
                 }
                 fclose(disk);       // close the disk file
