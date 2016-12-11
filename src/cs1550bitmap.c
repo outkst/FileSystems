@@ -148,7 +148,7 @@ int find_free_block(void) {
         if (bit == 0) { 
             printf("[find_free_block] Found free block at diskfile-index=%d AKA map[%d]=%s, bit #%d\n", index, GET_BM_INDEX(index), byte_to_binary(map[GET_BM_INDEX(index)]), GET_BIT_OFFSET(index)+1);
             set_bit(index);                                     // mark this free bit as occupied
-            printf("--------------------------------------------------------------------------[END find_free_block]\n\n");
+            printf("--------------------------------------------------------------------------[END find_free_block]\n");
             return index;                                       // found a free block
         }
         index++;

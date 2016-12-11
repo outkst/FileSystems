@@ -91,11 +91,13 @@ typedef struct cs1550_directory_entry cs1550_directory_entry;
 typedef struct cs1550_file_directory cs1550_file_directory;
 typedef struct cs1550_disk_block cs1550_disk_block;
 
+
 /*
     Searches the root structure for the given directory name, and
     returns the starting block in the file for the directory.
 
-    RETURNS: The start block of the given directory; otherwise '-1'.
+    RETURNS:    0+  SUCCESS. The start block offset of the given directory
+                -1  The directory does not exist
 */
 static long find_directory(char *dir_name) {
     long index = -1;                        // assume directory does not exist
@@ -132,16 +134,11 @@ static long find_directory(char *dir_name) {
 
 
 /*
-    Searches a directory structure at the given start block
-    for the given filename and extension. Returns the file
-    struct if found.
-
-    RETURNS: The cs1550_file_directory struct of the given filename/extension; otherwise NULL.
+    Given an offset to a disk block, will return the cs1550_directory_entry structure.
 */
-static cs1550_file_directory *get_file(long dir_start_block, char *file_name, char *ext_name) {
-    cs1550_file_directory *disk_file = NULL;                    // assume file does not exist
-
-    printf("[get_file] dir_start_block=%lu, file_name=%s, ext_name=%s\n", dir_start_block, file_name, ext_name);
+static cs1550_directory_entry *get_directory(long index) {
+    cs1550_directory_entry *dir;                                // assume dir entry does not exist
+    dir = (cs1550_directory_entry*)calloc(1, sizeof(cs1550_directory_entry));
 
     // open the disk file
     FILE *disk = fopen(DISK, "rb");                             // open with respect to binary mode
@@ -151,27 +148,48 @@ static cs1550_file_directory *get_file(long dir_start_block, char *file_name, ch
         // ERROR
 
     } else {
-        cs1550_directory_entry dir;                             // pointer to dir of disk file
-        fseek(disk, dir_start_block * BLOCK_SIZE, SEEK_SET);    // seek to the starting block of dir struct
-        fread(&dir, sizeof(cs1550_directory_entry), 1, disk);   // get the directory at this start block
+        fseek(disk, index * BLOCK_SIZE, SEEK_SET);              // seek to the starting block of dir struct
+        printf("[get_directory] seeked to %lu * %d = %lu\n", index, BLOCK_SIZE, index*BLOCK_SIZE);
+        fread(dir, sizeof(cs1550_directory_entry), 1, disk);    // get the directory at this start block
+        printf("[get_directory] fread into dir\n");
+        fclose(disk);                                           // close the disk
+    }
 
-        // search for the file within the list of valid files
-        int i;
-        printf("[get_file] dir.nFiles=%d.\n", dir.nFiles);
-        for (i=0; i < dir.nFiles; i++) {                        // loop through valid files
-            if (strcmp(dir.files[i].fname, file_name) == 0) {
-                if (strcmp(dir.files[i].fext, ext_name)) {
-                    disk_file = &dir.files[i];                  // found the file
-                    break;
-                }
+    return dir;
+}
+
+
+/*
+    Searches through the given directory entry's file list and returns
+    the file directory with the given filename and extension; 
+
+    RETURNS:    cs1550_file_directory*      the file struct of the given filename/extension
+                NULL                        the filename/extension was not found
+*/
+static cs1550_file_directory *get_file(cs1550_directory_entry *dir, char *file_name, char *ext_name) {
+    cs1550_file_directory *disk_file = NULL;            // assume file does not exist
+
+    printf("[get_file] !! dir->nFiles=%d, file_name=%s, ext_name=%s.\n", dir->nFiles, file_name, ext_name);
+
+    int i;
+    cs1550_file_directory file_dir;
+    for (i=0; i < dir->nFiles; i++) {                   // loop through valid files
+        file_dir = dir->files[i];
+        printf("[get_file] file_dir: name=%s, ext=%s, size=%zu, startblock=%lu\n", file_dir.fname, file_dir.fext, file_dir.fsize, file_dir.nStartBlock);
+        printf("[get_file] comparing file_dir.fname=%s to file_name=%s\n", file_dir.fname, file_name);
+        if (strcmp(file_dir.fname, file_name) == 0) {
+            printf("[get_file] comparing file_dir.fext=%s to ext_name=%s\n", file_dir.fext, ext_name);
+            if (strcmp(file_dir.fext, ext_name) == 0) {
+                printf("[get_file] Filename and Extension match!\n");
+                disk_file = &file_dir;                  // found the file struct
+                break;
             }
         }
-
-        fclose(disk);                                           // close the disk
     }
 
     return disk_file;
 }
+
 
 /*
     Looks up the input path to determine if it is a directory
@@ -228,7 +246,8 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
             } else {
                 // find the directory (if it exists)
                 printf("[cs1550_getattr] calling find_directory with dir=%s\n", dir);
-                long dir_block = find_directory(dir);       // returns the starting block of the directory entry
+                long dir_block = find_directory(dir);       // find the directory
+
                 printf("[cs1550_getattr] dir_block=%lu\n", dir_block);
                 if (dir_block < 0) {
                     // DIRECTORY NOT FOUND
@@ -237,22 +256,28 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
 
                     stbuf->st_mode = S_IFDIR | 0755;        // file type and mode
                     stbuf->st_nlink = 2;                    // number of hard links
-
                     status = 0;                             // SUCCESS
 
                 } else {                                    // RETURN FILE INFO
-
+                    printf("[cs1550_getattr] file info, scanresult=%d, dir_block=%lu\n", scan_result, dir_block);
+                    // get the dir entry struct
+                    cs1550_directory_entry *dir_entry;      // holds the directory entry
+                    dir_entry = get_directory(dir_block);   // gets the directory entry
+                    printf("[cs1550_getattr] good directory entry. dir_entry->nFiles=%d\n", dir_entry->nFiles);
                     if (scan_result == 2) { ext[0] = '\0';} // make extension NULL if blank
 
+                    printf("[cs1550_getattr] Calling get_file with dir_entry->nFiles=%d, filename=%s, ext=%s\n", dir_entry->nFiles, filename, ext);
                     // find the filename (if it exists)
                     cs1550_file_directory *file;
-                    file = get_file(dir_block, filename, ext);
+                    file = get_file(dir_entry, filename, ext);
 
                     if (file == NULL) {
                         // FILE NOT FOUND
+                        printf("[cs1550_getattr] get_file returned NULL\n");
 
-                    } else {                                // RETURN FILE INFO
+                    } else {
                         // found the file
+                        printf("[cs1550_getattr] get_file returned file! name=%s, ext=%s, size=%zu, startblock=%lu\n", file->fname, file->fext, file->fsize, file->nStartBlock);
                         stbuf->st_mode = S_IFREG | 0666;    // file type and mode
                         stbuf->st_nlink = 1;                // number of hard links
                         stbuf->st_size = file->fsize;       // total file size, in bytes
@@ -264,7 +289,6 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
         }
     }
 
-    // return 0 if success; otherwise -ENOENT
     return status;
 }
 
@@ -328,8 +352,8 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                 printf("[cs1550_readdir] GOOD\n");
 
                 // the filler function allows us to add entries to the listing
-                filler(buf, ".", NULL, 0);          // default
-                filler(buf, "..", NULL, 0);         // default
+                filler(buf, ".", NULL, 0);          // default output
+                filler(buf, "..", NULL, 0);         // default output
 
                 // get reference to the root struct
                 cs1550_root_directory root;                                 // pointer to root of disk file
@@ -351,18 +375,28 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                     long offset = 0;
                     for (num=0; num < root.nDirectories; num++) {
                         if (strcmp(root.directories[num].dname, dir_name) == 0) {
+                            printf("[cs1550_readdir] Found directory %s at block %lu\n", dir_name, root.directories[num].nStartBlock);
                             offset = root.directories[num].nStartBlock * BLOCK_SIZE;    // found the reference
                         }
                     }
 
+                    printf("[cs1550_readdir] Seeking to directory_entry offset %lu\n", offset);
                     // get reference to subdirectory's contents using offset
                     cs1550_directory_entry dir_entry;
                     fseek(disk, offset, SEEK_SET);                                      // goto subdir's location on disk
                     fread(&dir_entry, sizeof(cs1550_directory_entry), 1, disk);         // read in subdir struct
 
                     // output the filename, extension, and filesize
+                    char filename[MAX_LENGTH];
                     for (num=0; num < dir_entry.nFiles; num++) {
-                        filler(buf, dir_entry.files[num].fname + 1, NULL, 0);           // add this file to the output
+                        printf("[cs1550_readdir] Filling entry #%d of nFiles #%d. fname=%s, fext=%s, fsize=%zu, nStartBlock=%lu\n", num, dir_entry.nFiles, dir_entry.files[num].fname, dir_entry.files[num].fext, dir_entry.files[num].fsize, dir_entry.files[num].nStartBlock);
+                        // see if file has extension
+                        strcpy(filename, dir_entry.files[num].fname);
+                        if (strlen(dir_entry.files[num].fext) > 0) {
+                            strcat(filename, ".");
+                            strcat(filename, dir_entry.files[num].fext);
+                        }
+                        filler(buf, filename, NULL, 0);           // add this file to the output
                     }
                 }
                 fclose(disk);       // close the disk file
@@ -370,11 +404,6 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         }
     }
 
-    /*
-    // add the user stuff (subdirs or files)
-    // the +1 skips the leading '/' on the filenames
-    filler(buf, newpath + 1, NULL, 0);
-    */
    return status;
 }
 
@@ -515,6 +544,8 @@ static int cs1550_mknod(const char *path, mode_t mode, dev_t dev)
     (void) mode;
     (void) dev;
 
+    printf("[cs1550_mknod] path is: %s\n", path);
+
     int status = 0;                         // assume SUCCESS
 
     // hold the directory, filename, and extension
@@ -538,22 +569,75 @@ static int cs1550_mknod(const char *path, mode_t mode, dev_t dev)
         */
         int scan_result = sscanf(path, "/%[^/]/%[^.].%s", dir, filename, ext);
 
+        if (scan_result == 2) { ext[0] = '\0';}     // make extension NULL if blank
+        printf("[cs1550_mknod] dir=%s, filename=%s, ext=%s\n", dir, filename, ext);
         if ((scan_result == EOF) ||                 // EOF error
-            (scan_result <= 0) ||                   // nothing was filled (no dir, no filename, no ext)
             (strlen(dir) > MAX_FILENAME) ||         // make sure directory within max length
             (strlen(filename) > MAX_FILENAME) ||    // make sure filename within max length
             (strlen(ext) > MAX_EXTENSION))          // make sure extension within max length
         {
             status = -ENAMETOOLONG;                 // ERROR: path or file invalid
 
+        } else if (scan_result <= 1) {
+            status = -EPERM;                        // ERROR: cannot create file in root
+
         } else {
+            printf("[cs1550_mknod] GOOD TO GO. LOOK IF FILE EXISTS. IF NOT, CREATE\n");
             // make sure the filename/ext has not already been created
 
+            // get the directory location
+            long dir_block = find_directory(dir);               // returns the starting block of the directory entry
+            cs1550_directory_entry *dir_entry = get_directory(dir_block);  // gets the actual dir entry struct
 
+            if (dir_block < 0) {
+                status = -ENOENT;                               // ERROR: directory not found
+
+            } else if (dir_entry->nFiles >= MAX_FILES_IN_DIR) {
+                status = -ENOSPC;                               // ERROR: max number of files created in this directory
+
+            } else {
+                // get the list of files for this directory
+                cs1550_file_directory *file = get_file(dir_entry, filename, ext);
+
+                if (file == NULL) {
+                    // check if space exists
+                    int free_block;
+                    if ((free_block = find_free_block()) == -1) {
+                        status = -ENOSPC;                       // ERROR: no space left on disk
+
+                    } else {
+                        // create the file
+                        printf("[cs1550_mknod] START CREATING FILE\n");
+                        cs1550_file_directory *new_file;         // create a new file dir struct
+                        new_file = (cs1550_file_directory*)calloc(1, sizeof(cs1550_file_directory));
+
+                        printf("[cs1550_mknod] Copying into new_file.fname the filename=%s, fext the ext=%s\n", filename, ext);
+                        strcpy(new_file->fname, filename);      // file name
+                        strcpy(new_file->fext, ext);            // extension name
+                        new_file->nStartBlock = free_block;     // offset on disk of starting block
+                        new_file->fsize = 0;                    // default size
+
+
+                        printf("[cs1550_mknod] copied info to new_file. nStartBlock=%lu, fname=%s, fext=%s\n", new_file->nStartBlock, new_file->fname, new_file->fext);
+                        // add to directory entry
+                        dir_entry->files[dir_entry->nFiles] = *new_file;    // add this file to the list of files in the directory
+                        dir_entry->nFiles++;                                // increment number of valid files in this directory
+
+                        printf("[cs1550_mknod] dir_entry. nFiles=%d\n", dir_entry->nFiles);
+
+                        // write out the root to disk
+                        FILE *disk = fopen(DISK, "r+b");
+                        fseek(disk, dir_block * BLOCK_SIZE, SEEK_SET);                      // goto free block
+                        fwrite(dir_entry, sizeof(struct cs1550_directory_entry), 1, disk);  // write root to disk
+                        fclose(disk);
+                    }
+                } else {
+                    printf("[cs1550_mknod] File struct was returned. ALREADY EXISTS");                    
+                    status = -EEXIST;                           // ERROR: file already exists
+                }
+            }
         }
-
     }
-
 
     return status;
 }
@@ -607,6 +691,7 @@ static int cs1550_write(const char *path, const char *buf, size_t size,
     (void) fi;
     (void) path;
 
+    printf("[cs1550_write]  path=%s\nbuf=%s\nsize=%zu\noffset=%d\n", path, buf, size, offset);
     // check to make sure path exists
     // check that size is > 0
     // check that offset is <= to the file size
