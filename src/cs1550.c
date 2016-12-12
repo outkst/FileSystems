@@ -17,11 +17,12 @@
 
 #define     FUSE_USE_VERSION 26
 
-#include    <fuse.h>
-#include    <stdio.h>
-#include    <string.h>
 #include    <errno.h>
 #include    <fcntl.h>
+#include    <fuse.h>
+#include    <stdio.h>
+#include    <stdlib.h>
+#include    <string.h>
 
 #define     BLOCK_SIZE      512         // disk's block size
 #define     DISK            ".disk"     // keep reference to our .disk file
@@ -161,6 +162,36 @@ static cs1550_directory_entry *get_directory(long index) {
 
 /*
     Searches through the given directory entry's file list and returns
+    the index of where the file directory is located within the directory structure.
+
+    RETURNS:    0+          SUCCESS; location of the file in the dir struct
+                -1          not found
+*/
+static int find_file(cs1550_directory_entry *dir, char *file_name, char *ext_name) {
+    int index = -1;
+
+    int i;
+    cs1550_file_directory file_dir;
+    for (i=0; i < dir->nFiles; i++) {                   // loop through valid files
+        file_dir = dir->files[i];
+        //printf("[get_file] file_dir: name=%s, ext=%s, size=%zu, startblock=%lu\n", file_dir.fname, file_dir.fext, file_dir.fsize, file_dir.nStartBlock);
+        //printf("[get_file] comparing file_dir.fname=%s to file_name=%s\n", file_dir.fname, file_name);
+        if (strcmp(file_dir.fname, file_name) == 0) {
+            //printf("[get_file] comparing file_dir.fext=%s to ext_name=%s\n", file_dir.fext, ext_name);
+            if (strcmp(file_dir.fext, ext_name) == 0) {
+                printf("[get_file] Filename and Extension match!\n");
+                index = i;                  // found the file struct
+                break;
+            }
+        }
+    }
+
+    return index;
+}
+
+
+/*
+    Searches through the given directory entry's file list and returns
     the file directory with the given filename and extension; 
 
     RETURNS:    cs1550_file_directory*      the file struct of the given filename/extension
@@ -169,16 +200,16 @@ static cs1550_directory_entry *get_directory(long index) {
 static cs1550_file_directory *get_file(cs1550_directory_entry *dir, char *file_name, char *ext_name) {
     cs1550_file_directory *disk_file = NULL;            // assume file does not exist
 
-    printf("[get_file] !! dir->nFiles=%d, file_name=%s, ext_name=%s.\n", dir->nFiles, file_name, ext_name);
+    printf("[get_file] dir->nFiles=%d, file_name=%s, ext_name=%s.\n", dir->nFiles, file_name, ext_name);
 
     int i;
     cs1550_file_directory file_dir;
     for (i=0; i < dir->nFiles; i++) {                   // loop through valid files
         file_dir = dir->files[i];
-        printf("[get_file] file_dir: name=%s, ext=%s, size=%zu, startblock=%lu\n", file_dir.fname, file_dir.fext, file_dir.fsize, file_dir.nStartBlock);
-        printf("[get_file] comparing file_dir.fname=%s to file_name=%s\n", file_dir.fname, file_name);
+        //printf("[get_file] file_dir: name=%s, ext=%s, size=%zu, startblock=%lu\n", file_dir.fname, file_dir.fext, file_dir.fsize, file_dir.nStartBlock);
+        //printf("[get_file] comparing file_dir.fname=%s to file_name=%s\n", file_dir.fname, file_name);
         if (strcmp(file_dir.fname, file_name) == 0) {
-            printf("[get_file] comparing file_dir.fext=%s to ext_name=%s\n", file_dir.fext, ext_name);
+            //printf("[get_file] comparing file_dir.fext=%s to ext_name=%s\n", file_dir.fext, ext_name);
             if (strcmp(file_dir.fext, ext_name) == 0) {
                 printf("[get_file] Filename and Extension match!\n");
                 disk_file = &file_dir;                  // found the file struct
@@ -188,6 +219,78 @@ static cs1550_file_directory *get_file(cs1550_directory_entry *dir, char *file_n
     }
 
     return disk_file;
+}
+
+
+/*
+    Given a starting disk block index on the disk, will traverse the given
+    block_num nodes and return the disk block at this location.
+*/
+static cs1550_disk_block *get_disk_block(long index, int block_num) {
+    cs1550_disk_block *disk_block;
+    disk_block = (cs1550_disk_block*)calloc(1, sizeof(cs1550_disk_block));
+
+    // open the disk file
+    FILE *disk = fopen(DISK, "rb");                             // open with respect to binary mode
+
+    // make sure could open the disk file
+    if (disk == NULL) {
+        // ERROR
+
+    } else {
+        // traverse the given number of nodes
+        int i;
+        for (i = 0; i <= block_num; i++) {
+            fseek(disk, index * BLOCK_SIZE, SEEK_SET);             // seek to the position of the next disk block for this file
+            printf("[get_disk_block] seeked to %lu * %d = %lu\n", index, BLOCK_SIZE, index*BLOCK_SIZE);
+            fread(disk_block, sizeof(cs1550_disk_block), 1, disk);      // get the disk block at this start block
+            index = disk_block->nNextBlock;                        // get the disk location of the next block associated with this file
+        }
+
+        fclose(disk);                                                   // close the disk file
+    }
+
+    return disk_block;
+}
+
+
+/*
+    Given a disk block, will write it out to disk at the given location.
+*/
+static void write_block_to_disk(cs1550_disk_block *block, long index) {
+    // open the disk file
+    FILE *disk = fopen(DISK, "r+b");                         // open read/write binary mode
+
+    // make sure could open the disk file
+    if (disk == NULL) {
+        // ERROR
+
+    } else {
+        fseek(disk, index * BLOCK_SIZE, SEEK_SET);          // seek to the starting block of file block struct
+        printf("[write_block_to_disk] seeking to %lu * %d = %lu\n", index, BLOCK_SIZE, index*BLOCK_SIZE);
+        fwrite(block, sizeof(cs1550_disk_block), 1, disk);  // get the file block at this start block
+        fclose(disk);                                       // close the disk
+    }
+}
+
+
+/*
+    Given a directory entry, will write it out to disk at the given location.
+*/
+static void write_dir_entry_to_disk(cs1550_directory_entry *block, long index) {
+    // open the disk file
+    FILE *disk = fopen(DISK, "r+b");                            // open read/write binary mode
+
+    // make sure could open the disk file
+    if (disk == NULL) {
+        // ERROR
+
+    } else {
+        fseek(disk, index * BLOCK_SIZE, SEEK_SET);              // seek to the starting block of file block struct
+        printf("[write_dir_entry_to_disk] seeking to %lu * %d = %lu\n", index, BLOCK_SIZE, index*BLOCK_SIZE);
+        fwrite(block, sizeof(cs1550_directory_entry), 1, disk); // get the file block at this start block
+        fclose(disk);                                           // close the disk
+    }
 }
 
 
@@ -263,7 +366,9 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
                     // get the dir entry struct
                     cs1550_directory_entry *dir_entry;      // holds the directory entry
                     dir_entry = get_directory(dir_block);   // gets the directory entry
+
                     printf("[cs1550_getattr] good directory entry. dir_entry->nFiles=%d\n", dir_entry->nFiles);
+
                     if (scan_result == 2) { ext[0] = '\0';} // make extension NULL if blank
 
                     printf("[cs1550_getattr] Calling get_file with dir_entry->nFiles=%d, filename=%s, ext=%s\n", dir_entry->nFiles, filename, ext);
@@ -284,6 +389,10 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
                         
                         status = 0;                         // SUCCESS
                     }
+
+                    // cleanup pointers
+                    //free(dir_entry);
+                    //free(file);
                 }
             }
         }
@@ -425,7 +534,8 @@ static int cs1550_mkdir(const char *path, mode_t mode)
 {
     (void) mode;
 
-    int status = 0, free_block;
+    int status = 0;
+    long free_block;
     char dir_name[MAX_LENGTH];
     char file[MAX_LENGTH];
     FILE *disk;
@@ -496,6 +606,10 @@ static int cs1550_mkdir(const char *path, mode_t mode)
                 fwrite(&root, sizeof(struct cs1550_root_directory), 1, disk);   // write root to disk
 
                 //printf("cs1550_mkdir OUTPUTTING new_dir_entry from within root: dname='%s' nstartblock='%lu'\n", root.directories[root.nDirectories-1].dname, root.directories[root.nDirectories-1].nStartBlock);
+
+                // free up space
+                free(new_dir);
+                free(new_dir_entry);
             }
         }
     }
@@ -587,7 +701,9 @@ static int cs1550_mknod(const char *path, mode_t mode, dev_t dev)
 
             // get the directory location
             long dir_block = find_directory(dir);               // returns the starting block of the directory entry
-            cs1550_directory_entry *dir_entry = get_directory(dir_block);  // gets the actual dir entry struct
+
+            cs1550_directory_entry *dir_entry;
+            dir_entry = get_directory(dir_block);               // gets the actual dir entry struct
 
             if (dir_block < 0) {
                 status = -ENOENT;                               // ERROR: directory not found
@@ -601,7 +717,7 @@ static int cs1550_mknod(const char *path, mode_t mode, dev_t dev)
 
                 if (file == NULL) {
                     // check if space exists
-                    int free_block;
+                    long free_block;
                     if ((free_block = find_free_block()) == -1) {
                         status = -ENOSPC;                       // ERROR: no space left on disk
 
@@ -611,10 +727,10 @@ static int cs1550_mknod(const char *path, mode_t mode, dev_t dev)
                         cs1550_file_directory *new_file;         // create a new file dir struct
                         new_file = (cs1550_file_directory*)calloc(1, sizeof(cs1550_file_directory));
 
-                        printf("[cs1550_mknod] Copying into new_file.fname the filename=%s, fext the ext=%s\n", filename, ext);
+                        printf("[cs1550_mknod] Copying into new_file.fname the filename=%s, fext the ext=%s, startblock=%lu\n", filename, ext, free_block);
                         strcpy(new_file->fname, filename);      // file name
                         strcpy(new_file->fext, ext);            // extension name
-                        new_file->nStartBlock = free_block;     // offset on disk of starting block
+                        new_file->nStartBlock = find_free_block();     // offset on disk of starting block
                         new_file->fsize = 0;                    // default size
 
 
@@ -623,10 +739,10 @@ static int cs1550_mknod(const char *path, mode_t mode, dev_t dev)
                         dir_entry->files[dir_entry->nFiles] = *new_file;    // add this file to the list of files in the directory
                         dir_entry->nFiles++;                                // increment number of valid files in this directory
 
-                        printf("[cs1550_mknod] dir_entry. nFiles=%d\n", dir_entry->nFiles);
+                        printf("[cs1550_mknod] dir_entry. nFiles=%d, file.name=%s, file.ext=%s, file.startblock=%lu\n", dir_entry->nFiles, dir_entry->files[0].fname, dir_entry->files[0].fext, dir_entry->files[0].nStartBlock);
 
                         // write out the root to disk
-                        FILE *disk = fopen(DISK, "r+b");
+                        FILE *disk = fopen(DISK, "r+b");                                    // open read/write binary mode
                         fseek(disk, dir_block * BLOCK_SIZE, SEEK_SET);                      // goto free block
                         fwrite(dir_entry, sizeof(struct cs1550_directory_entry), 1, disk);  // write root to disk
                         fclose(disk);
@@ -635,7 +751,13 @@ static int cs1550_mknod(const char *path, mode_t mode, dev_t dev)
                     printf("[cs1550_mknod] File struct was returned. ALREADY EXISTS");                    
                     status = -EEXIST;                           // ERROR: file already exists
                 }
+
+                // cleanup pointers
+                //free(file);
             }
+
+            // cleanup pointers
+            //free(dir_entry);
         }
     }
 
@@ -680,21 +802,139 @@ static int cs1550_read(const char *path, char *buf, size_t size, off_t offset,
 
 
 /* 
- * Write size bytes from buf into file starting from offset
- *
+    Writes the data passed in via buf into the file at path, starting
+    at the given offset within the file block. Each block will be
+    written back to disk upon completion.
  */
 static int cs1550_write(const char *path, const char *buf, size_t size, 
    off_t offset, struct fuse_file_info *fi)
 {
-    (void) buf;
-    (void) offset;
+    //(void) buf;
+    //(void) offset;
     (void) fi;
-    (void) path;
+    //(void) path;
 
-    printf("[cs1550_write]  path=%s\nbuf=%s\nsize=%zu\noffset=%d\n", path, buf, size, offset);
-    // check to make sure path exists
+    int result = 0;
+
+    char dir[MAX_LENGTH];           // directory
+    char filename[MAX_LENGTH];      // filename
+    char ext[MAX_LENGTH];           // extension
+
+    printf("[cs1550_write]--------------------------------------------------------------------------\n");
+    printf("[cs1550_write]  path=%s\nbuf=%s\nsize=%zu\noffset=%zu\n", path, buf, size, offset);
+
+    // break path up into directory, filename, and extension
+    sscanf(path, "/%[^/]/%[^.].%s", dir, filename, ext);
+
+    printf("[cs1550_write] dir=%s, filename=%s, ext=%s\n", dir, filename, ext);
+
+    // check to make sure path (file) exists by getting the file
+    long dir_block = find_directory(dir);                                   // get block offset to where this dir entry is held
+    cs1550_directory_entry *dir_entry = get_directory(dir_block);           // get the actual dir entry struct
+    int file_index = find_file(dir_entry, filename, ext);                   // get the index of the file within the dir entry struct
+    cs1550_file_directory *file_entry = get_file(dir_entry, filename, ext); // get the filename struct
+    long block_loc = file_entry->nStartBlock;                                   // store location, on disk, of block
+
+
+    // update file size within the file struct
+    //cs1550_directory_entry *dir_entry2 = get_directory(dir_block);                   // get the actual dir entry struct
+    file_entry->fsize = size;
+    printf("[cs1550_write] dir_entry2: nFiles=%d\n", dir_entry->nFiles);
+    printf("[cs1550_write] dir_entry2: fname=%s, fext=%s, fsize=%zu, nstartblock=%lu\n", dir_entry->files[0].fname, dir_entry->files[0].fext, dir_entry->files[0].fsize, dir_entry->files[0].nStartBlock);
+    dir_entry->files[file_index] = *file_entry;
+
+    // write directory entry back to disk
+    // write out the root to disk
+    FILE *disk = fopen(DISK, "r+b");                                    // open read/write binary mode
+    fseek(disk, dir_block * BLOCK_SIZE, SEEK_SET);                      // goto free block
+    fwrite(dir_entry, sizeof(struct cs1550_directory_entry), 1, disk);  // write root to disk
+    fclose(disk);
+
+    //printf("[cs1550_write] !!! file entry. fname=%s, fext=%s, fsize=%zu, startblock=%lu\n", file_entry->fname, file_entry->fext, file_entry->fsize, file_entry->nStartBlock);
+    // free up dir_entry
+    //free(dir_entry);
+
     // check that size is > 0
     // check that offset is <= to the file size
+    if ((size == 0) ||
+        (offset > size)) {
+        result = -EFBIG;                    // ERROR: Offset is beyond file size
+
+    } else {
+
+        // determine how many blocks will be needed
+        long num_blocks_needed = (1 + (((size - 1) / MAX_DATA_IN_BLOCK)));          // get ceiling value of blocks needed
+        long start_block = offset / MAX_DATA_IN_BLOCK;                              // the block to start writing/appending to
+        long start_offset = offset % MAX_DATA_IN_BLOCK;                             // specific offset within starting block
+        
+        size_t bytes_wrote = 0;                                                     // number of bytes written so far
+        //size_t size_left_to_write = size;                                         // keep tracking of how much left to store
+
+        printf("[cs1550_write] num_blocks_needed = %lu\n", num_blocks_needed);
+        printf("[cs1550_write] start_block = %lu\n", start_block);
+        printf("[cs1550_write] bytes_wrote = %zu\n", bytes_wrote);
+        printf("[cs1550_write] block_loc = %lu\n", block_loc);
+
+        printf("[cs1550_write] - - - - -- - -- - - - - - - - \n");
+
+        // write out the data to file's disk blocks
+        cs1550_disk_block *disk_block = get_disk_block(block_loc, start_block);     // get data block
+        long block_num, data_offset=0;
+        size_t bytes_left;                                                          // amount of bytes left to write out
+        for (block_num = 0; block_num < num_blocks_needed; block_num++) {
+            bytes_left = size - bytes_wrote;                                        // calculate amount of bytes left to write
+
+            // set the offset (if any)
+            data_offset = ((block_num == 0) ? start_offset : 0);                    // if first block, start at proper offset; otherwise offset=0
+
+            printf("[cs1550_write] ------------- writing block_num %lu of %lu: \n", block_num+1, num_blocks_needed);
+            printf("[cs1550_write] data_offset=%lu, \n", data_offset);
+            //printf("[cs1550_write] (bytes_left (%lu) < MAX_DATA_IN_BLOCK (%lu)) ? %zu\n", bytes_left, MAX_DATA_IN_BLOCK, ((bytes_left < MAX_DATA_IN_BLOCK) ? bytes_left : MAX_DATA_IN_BLOCK));
+
+            // copy over # bytes_left or MAX_DATA_IN_BLOCK to this block
+            strncpy((disk_block->data + data_offset), (buf + bytes_wrote), ((bytes_left < MAX_DATA_IN_BLOCK) ? bytes_left : MAX_DATA_IN_BLOCK));
+            printf("[cs1550_write] wrote buf = %s\n", (buf + bytes_wrote));
+            printf("[cs1550_write] disk_block->data = %s\n", disk_block->data);
+
+            bytes_wrote += ((bytes_left < MAX_DATA_IN_BLOCK) ? bytes_left : MAX_DATA_IN_BLOCK);
+            printf("[cs1550_write] bytes_wrote = %zu\n", bytes_wrote);
+            printf("[cs1550_write] block_loc = %lu\n", block_loc);
+
+            // grab another free block if needed
+            if (block_num != (num_blocks_needed - 1)) {                                 // -1 to check against 0-based
+                printf("[cs1550_write] finding new block to write to...\n");
+                block_loc = find_free_block();                                          // get free block for next write
+                if (block_loc < 0) { return -ENOSPC; }                                  // ERROR: no space left
+                disk_block->nNextBlock = block_loc;                                     // store location to next block
+            } else {
+                printf("[cs1550_write] finished. writing '-1' to nNextBlock\n");
+                disk_block->nNextBlock = 0;                                            // store location to next block   
+            }
+
+            // write this block to disk at the given location
+            printf("[cs1550_write] writing disk_block to block_loc=%lu\n", block_loc);
+            write_block_to_disk(disk_block, block_loc);                                 // write out to disk
+
+            // switch to the next block
+            if (block_num != (num_blocks_needed - 1)) {
+                printf("[cs1550_write] getting next disk block...\n");
+                disk_block = get_disk_block(block_loc, block_num+1);                    // +1 to get NEXT block number
+            }
+        }
+        printf("[cs1550_write] ---------------------------");
+        // free pointers
+        //free(disk_block);
+
+        //write_dir_entry_to_disk(dir_entry2, dir_block);
+
+        // cleanup pointers
+        //free(disk_block);
+    }
+
+    // cleanup pointers
+    //free(dir_entry);
+    //free(file_entry);
+    
     // write data
     // set size (should be same as input) and return, or error
 
