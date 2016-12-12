@@ -171,7 +171,7 @@ static int find_file(cs1550_directory_entry *dir, char *file_name, char *ext_nam
         file_dir = dir->files[i];
         if (strcmp(file_dir.fname, file_name) == 0) {
             if (strcmp(file_dir.fext, ext_name) == 0) {
-                index = i;                  // found the file struct
+                index = i;                              // found the file struct
                 break;
             }
         }
@@ -217,7 +217,7 @@ static cs1550_disk_block *get_disk_block(long index, int block_num) {
     disk_block = (cs1550_disk_block*)calloc(1, sizeof(cs1550_disk_block));
 
     // open the disk file
-    FILE *disk = fopen(DISK, "rb");                             // open with respect to binary mode
+    FILE *disk = fopen(DISK, "rb");                                 // open with respect to binary mode
 
     // make sure could open the disk file
     if (disk == NULL) {
@@ -227,12 +227,12 @@ static cs1550_disk_block *get_disk_block(long index, int block_num) {
         // traverse the given number of nodes
         int i;
         for (i = 0; i <= block_num; i++) {
-            fseek(disk, index * BLOCK_SIZE, SEEK_SET);             // seek to the position of the next disk block for this file
-            fread(disk_block, sizeof(cs1550_disk_block), 1, disk);      // get the disk block at this start block
-            index = disk_block->nNextBlock;                        // get the disk location of the next block associated with this file
+            fseek(disk, index * BLOCK_SIZE, SEEK_SET);              // seek to the position of the next disk block for this file
+            fread(disk_block, sizeof(cs1550_disk_block), 1, disk);  // get the disk block at this start block
+            index = disk_block->nNextBlock;                         // get the disk location of the next block associated with this file
         }
 
-        fclose(disk);                                                   // close the disk file
+        fclose(disk);                                               // close the disk file
     }
 
     return disk_block;
@@ -244,7 +244,7 @@ static cs1550_disk_block *get_disk_block(long index, int block_num) {
 */
 static void write_block_to_disk(cs1550_disk_block *block, long index) {
     // open the disk file
-    FILE *disk = fopen(DISK, "r+b");                         // open read/write binary mode
+    FILE *disk = fopen(DISK, "r+b");                        // open read/write binary mode
 
     // make sure could open the disk file
     if (disk == NULL) {
@@ -302,11 +302,11 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
             */
             int scan_result = sscanf(path, "/%[^/]/%[^.].%s", dir, filename, ext);
 
-            if ((scan_result == EOF) ||                 // EOF error
-                (scan_result <= 0) ||                   // nothing was filled (no dir, no filename, no ext)
-                (strlen(dir) > MAX_FILENAME) ||         // make sure directory within max length
-                (strlen(filename) > MAX_FILENAME) ||    // make sure filename within max length
-                (strlen(ext) > MAX_EXTENSION))          // make sure extension within max length
+            if ((scan_result == EOF) ||                     // EOF error
+                (scan_result <= 0) ||                       // nothing was filled (no dir, no filename, no ext)
+                (strlen(dir) > MAX_FILENAME) ||             // make sure directory within max length
+                (strlen(filename) > MAX_FILENAME) ||        // make sure filename within max length
+                (strlen(ext) > MAX_EXTENSION))              // make sure extension within max length
             {
                 // ERROR
 
@@ -380,11 +380,11 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     (void) offset;
     (void) fi;
 
-    int status = 0;                 // default to good
+    int status = 0;                                 // default to good
 
-    char dir_name[MAX_LENGTH];      // holds directory name
-    char filename[MAX_LENGTH];      // holds filename
-    int num;                        // used to iterate through entries
+    char dir_name[MAX_LENGTH];                      // holds directory name
+    char filename[MAX_LENGTH];                      // holds filename
+    int num;                                        // used to iterate through entries
 
 
     if (strlen(path) > MAX_LENGTH) {
@@ -413,18 +413,18 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
             } else {
 
                 // the filler function allows us to add entries to the listing
-                filler(buf, ".", NULL, 0);          // default output
-                filler(buf, "..", NULL, 0);         // default output
+                filler(buf, ".", NULL, 0);                                              // default output
+                filler(buf, "..", NULL, 0);                                             // default output
 
                 // get reference to the root struct
-                cs1550_root_directory root;                                 // pointer to root of disk file
-                fread(&root, sizeof(cs1550_root_directory), 1, disk);       // put first 512bytes into root struct
+                cs1550_root_directory root;                                             // pointer to root of disk file
+                fread(&root, sizeof(cs1550_root_directory), 1, disk);                   // put first 512bytes into root struct
 
                 if (scan_result <= 0) {
 
                     // list contents of root directory (directories only)
                     for (num=0; num < root.nDirectories; num++) {
-                        filler(buf, root.directories[num].dname, NULL, 0);  // add this directory to the output
+                        filler(buf, root.directories[num].dname, NULL, 0);              // add this directory to the output
                     }
                     
                 } else {
@@ -452,10 +452,11 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                             strcat(filename, ".");
                             strcat(filename, dir_entry.files[num].fext);
                         }
-                        filler(buf, filename, NULL, 0);           // add this file to the output
+                        filler(buf, filename, NULL, 0);                                 // add this file to the output
                     }
                 }
-                fclose(disk);       // close the disk file
+
+                fclose(disk);                                                           // close the disk file
             }
         }
     }
@@ -493,50 +494,50 @@ static int cs1550_mkdir(const char *path, mode_t mode)
 
 
     if (scan_result != 1) {
-        status = -EPERM;                // ERROR: can ONLY create dir within '/' root
+        status = -EPERM;                                        // ERROR: can ONLY create dir within '/' root
 
     } else if (strlen(dir_name) > MAX_FILENAME) {
-        status = -ENAMETOOLONG;         // ERROR: directory name too long
+        status = -ENAMETOOLONG;                                 // ERROR: directory name too long
 
     } else if ((free_block = find_free_block()) == -1) {
-        status = -ENOSPC;               // ERROR: no space left on disk
+        status = -ENOSPC;                                       // ERROR: no space left on disk
 
     } else {
         /* TRY TO CREATE THE DIRECTORY */
 
         // open the disk file
-        disk = fopen(DISK, "r+b");      // open for reading + writing (binary)
+        disk = fopen(DISK, "r+b");                              // open for reading + writing (binary)
 
         if (disk == NULL) {
-            status = -ENOENT;           // ERROR: file not opened successfully
+            status = -ENOENT;                                   // ERROR: file not opened successfully
 
         } else {
             // get the root within the disk file
-            cs1550_root_directory root;                             // pointer to root of disk file
-            fread(&root, sizeof(cs1550_root_directory), 1, disk);   // root in disk exists within first 512bytes
+            cs1550_root_directory root;                                         // pointer to root of disk file
+            fread(&root, sizeof(cs1550_root_directory), 1, disk);               // root in disk exists within first 512bytes
 
             // make sure the root can hold another directory listing
             if (root.nDirectories >= MAX_DIRS_IN_ROOT) {
-                status = -ENOSPC;                                   // ERROR: not enough space
+                status = -ENOSPC;                                               // ERROR: not enough space
 
             } else {
                 // create directory inside the free block
-                cs1550_directory_entry *new_dir;                    // create a new directory struct to put in free block
+                cs1550_directory_entry *new_dir;                                // create a new directory struct to put in free block
                 new_dir = (struct cs1550_directory_entry*)calloc(1, sizeof(struct cs1550_directory_entry));
-                new_dir->nFiles = 0;                                // no files exist at first
+                new_dir->nFiles = 0;                                            // no files exist at first
 
-                fseek(disk, free_block * BLOCK_SIZE, SEEK_SET);     // goto free block
-                fwrite(new_dir, sizeof(cs1550_directory_entry), 1, disk);   // write new dir entry to disk
+                fseek(disk, free_block * BLOCK_SIZE, SEEK_SET);                 // goto free block
+                fwrite(new_dir, sizeof(cs1550_directory_entry), 1, disk);       // write new dir entry to disk
 
                 // create root dir struct
-                struct cs1550_directory *new_dir_entry;            // create a new directory stub
+                struct cs1550_directory *new_dir_entry;                         // create a new directory stub
                 new_dir_entry = (struct cs1550_directory*)calloc(1, sizeof(struct cs1550_directory));
 
-                strcpy(new_dir_entry->dname, dir_name);            // name of the actual directory
+                strcpy(new_dir_entry->dname, dir_name);                         // name of the actual directory
 
-                new_dir_entry->nStartBlock = free_block;           // make the start block the beginning of the free block found
+                new_dir_entry->nStartBlock = free_block;                        // make the start block the beginning of the free block found
 
-                root.directories[root.nDirectories] = *new_dir_entry;   // add directory to list of valid directories
+                root.directories[root.nDirectories] = *new_dir_entry;           // add directory to list of valid directories
                 root.nDirectories++;
 
                 // write out the root to disk
@@ -553,8 +554,7 @@ static int cs1550_mkdir(const char *path, mode_t mode)
     
     if (status == 0) {
         fclose(disk);           // close the disk
-        write_bitmap();         // update the bitmap on disk
-        
+        write_bitmap();         // update the bitmap on disk   
     }
 
     return status;
@@ -594,18 +594,18 @@ static int cs1550_mknod(const char *path, mode_t mode, dev_t dev)
     (void) dev;
 
 
-    int status = 0;                         // assume SUCCESS
+    int status = 0;                             // assume SUCCESS
 
     // hold the directory, filename, and extension
-    char dir[MAX_LENGTH];                   // directory
-    char filename[MAX_LENGTH];              // filename
-    char ext[MAX_LENGTH];                   // extension
+    char dir[MAX_LENGTH];                       // directory
+    char filename[MAX_LENGTH];                  // filename
+    char ext[MAX_LENGTH];                       // extension
     
     if (strcmp(path, "/") == 0) {
-        status = -EPERM;                    // ERROR: file cannot be created in root dir
+        status = -EPERM;                        // ERROR: file cannot be created in root dir
 
     } else if (strlen(path) >= MAX_LENGTH) {
-        status = -ENAMETOOLONG;             // ERROR: path name too long
+        status = -ENAMETOOLONG;                 // ERROR: path name too long
 
     } else {
         /*
@@ -652,17 +652,17 @@ static int cs1550_mknod(const char *path, mode_t mode, dev_t dev)
                     // check if space exists
                     long free_block;
                     if ((free_block = find_free_block()) == -1) {
-                        status = -ENOSPC;                       // ERROR: no space left on disk
+                        status = -ENOSPC;                           // ERROR: no space left on disk
 
                     } else {
                         // create the file
-                        cs1550_file_directory *new_file;         // create a new file dir struct
+                        cs1550_file_directory *new_file;            // create a new file dir struct
                         new_file = (cs1550_file_directory*)calloc(1, sizeof(cs1550_file_directory));
 
-                        strcpy(new_file->fname, filename);      // file name
-                        strcpy(new_file->fext, ext);            // extension name
-                        new_file->nStartBlock = find_free_block();     // offset on disk of starting block
-                        new_file->fsize = 0;                    // default size
+                        strcpy(new_file->fname, filename);          // file name
+                        strcpy(new_file->fext, ext);                // extension name
+                        new_file->nStartBlock = find_free_block();  // offset on disk of starting block
+                        new_file->fsize = 0;                        // default size
 
 
                         // add to directory entry
@@ -677,7 +677,7 @@ static int cs1550_mknod(const char *path, mode_t mode, dev_t dev)
                         fclose(disk);
                     }
                 } else {
-                    status = -EEXIST;                           // ERROR: file already exists
+                    status = -EEXIST;                                       // ERROR: file already exists
                 }
 
                 // cleanup pointers
@@ -729,10 +729,10 @@ static int cs1550_read(const char *path, char *buf, size_t size, off_t offset,
     // make sure size and offset are valid
     if ((size == 0) ||
         (offset > size)) {
-        return -EFBIG;                                                            // ERROR: offset is beyond file size
+        return -EFBIG;                                                              // ERROR: offset is beyond file size
 
     } else if (scan_result < 2) {
-        return -EISDIR;                                                           // ERROR: trying to read out a directory
+        return -EISDIR;                                                             // ERROR: trying to read out a directory
 
     } else {
         // check to make sure path (file) exists by getting the file
@@ -752,7 +752,7 @@ static int cs1550_read(const char *path, char *buf, size_t size, off_t offset,
         long block_num, data_offset=0;
         size_t bytes_left;                                                          // amount of bytes left to write out
         for (block_num = 0; block_num < num_blocks_needed; block_num++) {
-            bytes_left = size - bytes_read;                                        // calculate amount of bytes left to write
+            bytes_left = size - bytes_read;                                         // calculate amount of bytes left to write
             data_offset = ((block_num == 0) ? start_offset : 0);                    // if first block, start at proper offset
 
             // copy over # bytes_left or MAX_DATA_IN_BLOCK to this block
@@ -797,26 +797,26 @@ static int cs1550_write(const char *path, const char *buf, size_t size,
     sscanf(path, "/%[^/]/%[^.].%s", dir, filename, ext);
 
     // check to make sure path (file) exists by getting the file
-    long dir_block = find_directory(dir);                                   // get block offset to where this dir entry is held
-    cs1550_directory_entry *dir_entry = get_directory(dir_block);           // get the actual dir entry struct
-    int file_index = find_file(dir_entry, filename, ext);                   // get the index of the file within the dir entry struct
-    cs1550_file_directory *file_entry = get_file(dir_entry, filename, ext); // get the filename struct
-    long block_loc = file_entry->nStartBlock;                               // store location, on disk, of block
+    long dir_block = find_directory(dir);                                           // get block offset to where this dir entry is held
+    cs1550_directory_entry *dir_entry = get_directory(dir_block);                   // get the actual dir entry struct
+    int file_index = find_file(dir_entry, filename, ext);                           // get the index of the file within the dir entry struct
+    cs1550_file_directory *file_entry = get_file(dir_entry, filename, ext);         // get the filename struct
+    long block_loc = file_entry->nStartBlock;                                       // store location, on disk, of block
 
     // update file size within the file struct
     file_entry->fsize = size;
     dir_entry->files[file_index] = *file_entry;
 
     // write directory entry back to disk with updated size
-    FILE *disk = fopen(DISK, "r+b");                                        // open read/write binary mode
-    fseek(disk, dir_block * BLOCK_SIZE, SEEK_SET);                          // goto free block
-    fwrite(dir_entry, sizeof(struct cs1550_directory_entry), 1, disk);      // write root to disk
+    FILE *disk = fopen(DISK, "r+b");                                                // open read/write binary mode
+    fseek(disk, dir_block * BLOCK_SIZE, SEEK_SET);                                  // goto free block
+    fwrite(dir_entry, sizeof(struct cs1550_directory_entry), 1, disk);              // write root to disk
     fclose(disk);
 
     // make sure size and offset are valid
     if ((size == 0) ||
         (offset > size)) {
-        return -EFBIG;                                                    // ERROR: offset is beyond file size
+        return -EFBIG;                                                              // ERROR: offset is beyond file size
 
     } else {
 
